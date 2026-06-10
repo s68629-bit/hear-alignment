@@ -222,16 +222,16 @@ input[type=file] { display: none; }
         <circle cx="18" cy="20" r="4" stroke="#446" stroke-width="1.5"/>
         <polyline points="6,32 16,22 24,30 32,20 42,32" stroke="#446" stroke-width="1.5" fill="none"/>
       </svg>
-      <span>點擊上傳圖片</span>
-      <span style="font-size:0.63rem;color:#334">STEP 1：先拍刀口（未放鎳板）</span>
+      <span>點擊拍照</span>
+      <span style="font-size:0.63rem;color:#334">STEP 1：先拍剪床刀口（鎳板未放入）</span>
     </div>
     <canvas id="mainCanvas" style="display:none;"></canvas>
   </div>
 
   <!-- STEP 1 控制 -->
   <div class="controls" id="ctrl1">
-    <label class="file-btn" for="fileInput1">📷 上傳刀口圖片</label>
-    <input type="file" id="fileInput1" accept="image/*" capture="environment">
+    <label class="file-btn" for="fileInput1">📷 拍攝刀口</label>
+    <input type="file" id="fileInput1" accept="image/*" capture="environment" capture="environment">
     <button class="btn red" id="btnFindKnife" onclick="findKnife()" disabled>🤖 AI 辨識刀口</button>
     <button class="btn" id="btnManualKnife" onclick="setMode('knife')" disabled>✏ 手動標記</button>
     <div class="divider"></div>
@@ -243,8 +243,8 @@ input[type=file] { display: none; }
 
   <!-- STEP 2 控制 -->
   <div class="controls" id="ctrl2" style="display:none;">
-    <label class="file-btn" for="fileInput2">📷 上傳鎳板圖片</label>
-    <input type="file" id="fileInput2" accept="image/*" capture="environment">
+    <label class="file-btn" for="fileInput2">📷 拍攝鎳板</label>
+    <input type="file" id="fileInput2" accept="image/*" capture="environment" capture="environment">
     <button class="btn blue" id="btnFindMark" onclick="findMark()" disabled>🤖 AI 辨識畫線</button>
     <button class="btn" id="btnManualMark" onclick="setMode('mark')" disabled>✏ 手動標記</button>
     <button class="btn" onclick="resetToStep1()" style="font-size:0.72rem;">🔄 重設刀口</button>
