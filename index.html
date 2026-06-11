@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.5
+ 目前版本：v3.5.1
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.5 — 刀口改找白色下緣 + 鎖定直線模式 + 移除暫停</p>
+<p class="subtitle">v3.5.1 — 修正鎖定刀口按鈕未啟用問題</p>
 
 <div class="workspace">
 
@@ -239,6 +239,7 @@ async function toggleCam(){
     running=true;
     document.getElementById('btnCam').className='btn green on';
     document.getElementById('btnCam').textContent='📹 攝影機開啟中';
+    document.getElementById('btnLockKnife').disabled=false;
     document.getElementById('btnClickMark').disabled=false;
     setLive(true,'即時偵測中');
     setHint('✅ 攝影機已開啟，正在偵測刀口紅線。確認紅線位置後，推入鎳板，再按「點擊畫線定位」。','ok');
