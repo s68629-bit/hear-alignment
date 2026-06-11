@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.5.6
+ 目前版本：v3.5.8
  最後更新：2025-06
 =============================================================================
 -->
@@ -44,6 +44,8 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 #liveVideo { display: block; width: 100%; height: auto; }
 #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
 .video-wrap.click-active { cursor: crosshair; }
+.video-wrap.click-active video { cursor: crosshair; }
+.video-wrap.click-active canvas { cursor: crosshair; }
 .video-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 240px; color: #334455; font-size: 0.82rem; gap: 8px; }
 
 /* 狀態列 */
@@ -118,7 +120,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.5.6 — 修正亮度門檻，藍線偵測改為低亮度容許</p>
+<p class="subtitle">v3.5.8 — 加入手動兩點畫線功能</p>
 
 <div class="workspace">
 
@@ -166,6 +168,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
     <button class="btn green" id="btnCam" onclick="toggleCam()">📹 開啟攝影機</button>
     <button class="btn" id="btnLockKnife" onclick="lockKnifeBaseline()" disabled style="border-color:#aa6633;color:#ffcc88;background:#1e1208;">🔒 鎖定刀口</button>
     <button class="btn blue" id="btnClickMark" onclick="startMarkClick()" disabled>👆 AI 點擊定位</button>
+    <button class="btn" id="btnManualMark" onclick="startManualMark()" disabled style="border-color:#3a6a8a;color:#88ccee;background:#0e1a22;">✏️ 手動兩點畫線</button>
     <div class="divider"></div>
     <button class="btn" onclick="resetMark()" style="font-size:0.7rem;border-color:#335577;color:#6688aa;">🔄 重設畫線</button>
     <button class="btn" onclick="resetAll()" style="font-size:0.7rem;border-color:#7a4444;color:#cc8888;">✕ 全部重設</button>
@@ -221,6 +224,9 @@ let knifeLinear = null; // { p1, p2 } 量測用
 let markAnchorY = null;
 let markData    = null;   // { segXs, segYs, segValid, spline }
 let markClickPending = false;
+let manualMarkPending = false;  // 手動兩點畫線模式
+let manualMarkPoints = [];      // 已點的點 [{x,y}]
+let manualMarkLine = null;      // 手動畫線結果 {p1,p2}
 
 // 鎖定刀口
 let knifeLockedSegs=null;
@@ -256,6 +262,7 @@ async function toggleCam(){
     document.getElementById('btnCam').textContent='📹 攝影機開啟中';
     document.getElementById('btnLockKnife').disabled=false;
     document.getElementById('btnClickMark').disabled=false;
+    document.getElementById('btnManualMark').disabled=false;
     setLive(true,'即時偵測中');
     setHint('✅ 攝影機已開啟，正在偵測刀口紅線。確認紅線位置後，推入鎳板，再按「點擊畫線定位」。','ok');
     loop();
@@ -290,6 +297,50 @@ function applyZoom(val){
   overlay.style.transformOrigin='center top';
   // 調整 wrap 高度
   wrap.style.overflow= z>1 ? 'hidden' : 'hidden';
+}
+
+
+// ─── 手動兩點畫線 ─────────────────────────────────────────────────────────
+function startManualMark(){
+  if(!running){ setHint('⚠ 請先開啟攝影機。','err'); return; }
+  manualMarkPending=true;
+  manualMarkPoints=[];
+  touchStartX=0; touchStartY=0;
+  document.getElementById('videoWrap').classList.add('click-active');
+  document.getElementById('btnManualMark').className='btn click-active';
+  document.getElementById('btnManualMark').style='border-color:#3a6a8a;color:#88ccee;background:#0e1a22;';
+  document.getElementById('btnManualMark').textContent='✏️ 點第1點…';
+  setHint('✏️ 請點擊畫線左端（第1點），再點右端（第2點）。','blue');
+}
+
+function handleManualMarkPoint(x,y){
+  manualMarkPoints.push({x,y});
+  if(manualMarkPoints.length===1){
+    document.getElementById('btnManualMark').textContent='✏️ 點第2點…';
+    setHint('✏️ 第1點已記錄，請再點畫線右端（第2點）。','blue');
+    // 畫第一個點的標記
+    octx.save();
+    octx.beginPath(); octx.arc(x,y,8,0,Math.PI*2);
+    octx.strokeStyle='#55aaff'; octx.lineWidth=2; octx.stroke();
+    octx.fillStyle='#55aaff'; octx.globalAlpha=0.8; octx.fill(); octx.globalAlpha=1;
+    octx.restore();
+  } else if(manualMarkPoints.length>=2){
+    // 兩點都有了，建立直線
+    const p1=manualMarkPoints[0], p2=manualMarkPoints[1];
+    manualMarkLine={p1,p2};
+    manualMarkPending=false;
+    document.getElementById('videoWrap').classList.remove('click-active');
+    document.getElementById('btnManualMark').className='btn';
+    document.getElementById('btnManualMark').style='border-color:#3a6a8a;color:#88ccee;background:#0e1a22;';
+    document.getElementById('btnManualMark').textContent='✏️ 手動兩點畫線';
+
+    // 設定 markAnchorY 為兩點的平均 Y，讓像素追蹤也啟動
+    markAnchorY=Math.round((p1.y+p2.y)/2);
+    markHistory=[];
+
+    setHint('✅ 手動畫線完成！藍色虛線已標記，即時比對中。','ok');
+    setDC('dcMark','手動標記完成','full');
+  }
 }
 
 // ─── API Key ──────────────────────────────────────────────────────────────
@@ -359,25 +410,63 @@ async function aiLocateMark(b64, clickX, clickY){
 function startMarkClick(){
   if(!running){ setHint('⚠ 請先開啟攝影機。','err'); return; }
   markClickPending=true;
+  touchStartX=0; touchStartY=0;
   document.getElementById('videoWrap').classList.add('click-active');
   document.getElementById('btnClickMark').className='btn blue click-active';
   document.getElementById('btnClickMark').textContent='👆 點擊中…';
-  setHint('👆 請點擊鎳板上藍色/紫色畫線的位置（點附近即可）。','blue');
+  setHint('👆 請用手指點一下鎳板上的藍色畫線（輕觸一下即可，不要長按）。','blue');
+  // 在 overlay 上畫提示文字
+  octx.save();
+  octx.fillStyle='rgba(85,170,255,0.85)';
+  octx.font='bold 18px Courier New';
+  octx.textAlign='center';
+  octx.shadowColor='#000'; octx.shadowBlur=4;
+  octx.fillText('👆 請點擊藍色畫線位置', W/2, H/2);
+  octx.textAlign='left'; octx.shadowBlur=0;
+  octx.restore();
 }
 
 // 點擊事件改用 videoWrap（iOS Safari 相容性更好）
-document.getElementById('videoWrap').addEventListener('click', e=>{
-  if(!markClickPending) return;
-  const r=overlay.getBoundingClientRect();
-  const x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
-  handleMarkClick(x,y);
-});
+// ─── 點擊事件（iOS 相容）─────────────────────────────────────────────────
+// 用 videoWrap 的實際顯示尺寸計算座標，不受 transform 影響
+function getCanvasXY(clientX, clientY){
+  // 用 video 元素的實際顯示位置，不是 overlay（overlay 有 transform）
+  const videoEl=document.getElementById('liveVideo');
+  const r=videoEl.getBoundingClientRect();
+  // 座標對應到原始影像尺寸
+  const x=(clientX-r.left)*(W/r.width);
+  const y=(clientY-r.top)*(H/r.height);
+  return{x,y};
+}
+
+// touchstart：記錄起始位置（防止誤觸）
+let touchStartX=0, touchStartY=0;
+document.getElementById('videoWrap').addEventListener('touchstart', e=>{
+  if(!markClickPending && !manualMarkPending) return;
+  touchStartX=e.touches[0].clientX;
+  touchStartY=e.touches[0].clientY;
+},{passive:true});
+
+// touchend：確認是點擊（不是滑動）
 document.getElementById('videoWrap').addEventListener('touchend', e=>{
-  if(!markClickPending) return;
+  if(!markClickPending && !manualMarkPending) return;
   e.preventDefault();
-  const t=e.changedTouches[0], r=overlay.getBoundingClientRect();
-  handleMarkClick((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));
+  const t=e.changedTouches[0];
+  const dx=Math.abs(t.clientX-touchStartX);
+  const dy=Math.abs(t.clientY-touchStartY);
+  if(dx>10||dy>10) return;
+  const {x,y}=getCanvasXY(t.clientX,t.clientY);
+  if(markClickPending) handleMarkClick(x,y);
+  else if(manualMarkPending) handleManualMarkPoint(x,y);
 },{passive:false});
+
+// 電腦滑鼠點擊
+document.getElementById('videoWrap').addEventListener('click', e=>{
+  if(!markClickPending && !manualMarkPending) return;
+  const {x,y}=getCanvasXY(e.clientX,e.clientY);
+  if(markClickPending) handleMarkClick(x,y);
+  else if(manualMarkPending) handleManualMarkPoint(x,y);
+});
 
 function handleMarkClick(x,y){
   markClickPending=false;
@@ -418,6 +507,7 @@ function lockKnifeBaseline(){
 
 function resetMark(){
   markAnchorY=null; markData=null; markHistory=[];
+  manualMarkPending=false; manualMarkPoints=[]; manualMarkLine=null;
   document.getElementById('videoWrap').classList.remove('click-active');
   resetMetrics();
   setHint('畫線已重設。推入鎳板後按「點擊畫線定位」。','blue');
@@ -429,6 +519,7 @@ function resetAll(){
   knifeBaseline=null; knifeBaselineLocked=false;
   knifeLockedSegs=null; knifeLockedLinear=null; knifeLocked=false;
   markAnchorY=null; markData=null; markHistory=[];
+  manualMarkPending=false; manualMarkPoints=[]; manualMarkLine=null;
   markClickPending=false;
   document.getElementById('videoWrap').classList.remove('click-active');
   document.getElementById('btnClickMark').className='btn blue';
@@ -506,8 +597,10 @@ function loop(){
     if(knifeSegs) drawKnifeSegs();
   }
   if(markData)  drawMark();
+  if(manualMarkLine) drawManualMarkLine();
   const activeKnifeLinear = knifeLocked ? knifeLockedLinear : knifeLinear;
-  if(activeKnifeLinear && markData) { drawMeasureArrows(activeKnifeLinear); updateMetrics(activeKnifeLinear); }
+  const hasMarkRef = markData || manualMarkLine;
+  if(activeKnifeLinear && hasMarkRef) { drawMeasureArrows(activeKnifeLinear); updateMetrics(activeKnifeLinear); }
 }
 
 function getFrame(){
@@ -888,12 +981,20 @@ function drawMark(){
   octx.restore();
 }
 
+function getMarkYatX(x){
+  if(manualMarkLine){
+    return yAtX(manualMarkLine.p1,manualMarkLine.p2,x);
+  }
+  return markData?spYatX(markData.spline,x):null;
+}
+
 function drawMeasureArrows(kl){
   const lx=W*0.2, rx=W*0.8;
   const kyL=yAtX(kl.p1,kl.p2,lx);
   const kyR=yAtX(kl.p1,kl.p2,rx);
-  const myL=spYatX(markData.spline,lx);
-  const myR=spYatX(markData.spline,rx);
+  const myL=getMarkYatX(lx);
+  const myR=getMarkYatX(rx);
+  if(myL===null||myR===null) return;
   drawArrow(lx,kyL,lx,myL,'#ffd060');
   drawArrow(rx,kyR,rx,myR,'#ffd060');
   const ppm=getRW()/W;
@@ -901,6 +1002,31 @@ function drawMeasureArrows(kl){
   octx.shadowColor='#000'; octx.shadowBlur=3;
   octx.fillText(((myL-kyL)*ppm).toFixed(2)+'mm',lx+8,(kyL+myL)/2+4);
   octx.fillText(((myR-kyR)*ppm).toFixed(2)+'mm',rx+8,(kyR+myR)/2+4);
+  octx.shadowBlur=0; octx.restore();
+}
+
+
+function drawManualMarkLine(){
+  if(!manualMarkLine) return;
+  const {p1,p2}=manualMarkLine;
+  // 延伸到畫面左右邊緣
+  const slope=(p2.y-p1.y)/(p2.x-p1.x||1);
+  const b=p1.y-slope*p1.x;
+  octx.save();
+  // 暗藍延伸底線（全寬）
+  octx.beginPath(); octx.moveTo(0,b); octx.lineTo(W,slope*W+b);
+  octx.strokeStyle='#1a3a5a'; octx.lineWidth=1.5; octx.setLineDash([4,4]); octx.stroke(); octx.setLineDash([]);
+  // 兩點之間亮藍實線
+  octx.beginPath(); octx.moveTo(p1.x,p1.y); octx.lineTo(p2.x,p2.y);
+  octx.strokeStyle='#55aaff'; octx.lineWidth=2.5; octx.stroke();
+  // 端點
+  [p1,p2].forEach(p=>{
+    octx.beginPath(); octx.arc(p.x,p.y,5,0,Math.PI*2);
+    octx.fillStyle='#88ccff'; octx.globalAlpha=0.85; octx.fill(); octx.globalAlpha=1;
+  });
+  octx.fillStyle='#55aaff'; octx.font='bold 12px Courier New';
+  octx.shadowColor='#000'; octx.shadowBlur=3;
+  octx.fillText('畫線（手動）',p1.x+8,p1.y-10);
   octx.shadowBlur=0; octx.restore();
 }
 
@@ -920,8 +1046,9 @@ function updateMetrics(kl){
   const lx=W*0.2, rx=W*0.8;
   const kyL=yAtX(kl.p1,kl.p2,lx);
   const kyR=yAtX(kl.p1,kl.p2,rx);
-  const myL=spYatX(markData.spline,lx);
-  const myR=spYatX(markData.spline,rx);
+  const myL=getMarkYatX(lx);
+  const myR=getMarkYatX(rx);
+  if(myL===null||myR===null) return;
   const ppm=getRW()/W;
   const dl=(myL-kyL)*ppm, dr=(myR-kyR)*ppm, diff=Math.abs(dl-dr);
   const fmt=v=>(v>=0?'+':'')+v.toFixed(2);
