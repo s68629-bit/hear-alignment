@@ -2,883 +2,698 @@
 <html lang="zh-TW">
 <!--
 =============================================================================
- 剪床對位輔助系統 / Shear Blade Alignment Assistant
- 檔案名稱：index.html
- 部署位置：GitHub Pages — s68629-bit.github.io/hear-alignment/
+ 剪床對位輔助系統 — 動態即時版 / Shear Blade Alignment Assistant Live
+ 檔案名稱：live.html
+ 部署位置：GitHub Pages — s68629-bit.github.io/hear-alignment/live.html
 =============================================================================
 
  【版次編碼原則】
    整數位（X.0）：架構性重大變更、功能新增
    小數位（X.Y）：參數調整、UI 改善、Bug 修正
 
- 【版次歷史】（僅記錄整數版）
+ 【版次歷史】
  ─────────────────────────────────────────────────────────────────────────
- v1.0  初版。純像素亮度掃描自動偵測刀口與畫線。
- v2.0  改為 Claude API 視覺辨識，解決 CORS 問題。
- v3.0  加入 AI 結果確認機制（預覽後確認才套用）。
- v4.0  兩階段流程（STEP1鎖定刀口/STEP2對位畫線），記住 API Key。
- v5.0  刀口偵測改為純像素演算法，不需 API Key。
- v6.0  刀口偵測升級：Otsu 二值化 + 水平投影 + 線性迴歸（4段）。
- v7.0  刀口偵測升級為 8 段曲線擬合，加入即時攝影機模式。
- v8.0  加入版次管理區塊，修正版次編碼原則。
- v9.0  畫線偵測全面升級：
-        - 點擊輔助定位（人工點擊 + 程式精確定位）
-        - 16段定位 + Catmull-Rom 樣條曲線平滑
-        - 有效段（亮藍色）= 實際筆跡段
-        - 延伸段（暗藍色）= 線性迴歸外推，橫跨全畫面
-        - 亮藍 + 暗藍合為完整畫線基準，與刀口紅線比對偏差
-        - 加入混合模式：點擊定位 + Claude AI 精確定位
-        - 亞像素精度（加權平均 Y 值）
+ v1.0  動態即時版初版。
+        - 即時攝影機串流（手機或固定鏡頭均適用）
+        - STEP 1：按「辨識刀口」→ Otsu+水平投影偵測，紅線鎖定後持續顯示
+        - STEP 2：點擊畫記線位置 → 16段+樣條曲線定位，持續顯示亮藍/暗藍線
+        - 即時計算左右偏移、平行度數值（每幀更新）
+        - 作業員調整鎳板時可即時看到數值變化
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v9.0
+ 目前版本：v1.0
  最後更新：2025-06
 =============================================================================
 -->
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>剪床對位輔助系統</title>
+<title>剪床對位 — 即時版</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-body { background: #0f1117; color: #e0e6f0; font-family: 'Courier New', monospace; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 12px; }
-h1 { font-size: 1rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform: uppercase; margin-bottom: 2px; text-align: center; }
-.subtitle { font-size: 0.68rem; color: #445566; letter-spacing: 0.06em; margin-bottom: 12px; text-align: center; }
-.workspace { width: 100%; max-width: 960px; display: flex; flex-direction: column; gap: 10px; }
+body { background: #0f1117; color: #e0e6f0; font-family: 'Courier New', monospace; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 10px; }
+h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform: uppercase; margin-bottom: 2px; text-align: center; }
+.subtitle { font-size: 0.65rem; color: #445566; margin-bottom: 10px; text-align: center; }
+.workspace { width: 100%; max-width: 960px; display: flex; flex-direction: column; gap: 8px; }
 
-/* API Key */
-.apikey-row { display: flex; gap: 6px; align-items: center; background: #0d1018; border: 1px solid #2a3050; border-radius: 5px; padding: 8px 10px; flex-wrap: wrap; }
-.apikey-row label { font-size: 0.7rem; color: #556677; white-space: nowrap; }
-.apikey-input-wrap { flex: 1; min-width: 180px; display: flex; gap: 6px; align-items: center; }
-.apikey-row input[type=password] { flex: 1; padding: 6px 10px; background: #181e2c; border: 1px solid #2e3a50; border-radius: 4px; color: #8ab4e8; font-family: inherit; font-size: 0.76rem; min-width: 0; }
-.apikey-row input[type=password]:focus { outline: none; border-color: #4a7ab5; }
-.btn-save-key { padding: 6px 10px; border: 1px solid #3a5a3a; border-radius: 4px; background: #0e1a10; color: #7fd4a0; font-family: inherit; font-size: 0.7rem; cursor: pointer; white-space: nowrap; }
-.key-status { font-size: 0.65rem; color: #334455; width: 100%; margin-top: 2px; }
-.key-status.saved { color: #5dc87a; }
-
-/* 階段 */
-.phase-bar { display: flex; border-radius: 6px; overflow: hidden; border: 1px solid #1e2535; }
-.phase { flex: 1; padding: 9px 8px; text-align: center; font-size: 0.7rem; background: #0d1018; color: #334455; border-right: 1px solid #1e2535; transition: background 0.2s; }
+/* 階段指示 */
+.phase-bar { display: flex; border-radius: 5px; overflow: hidden; border: 1px solid #1e2535; }
+.phase { flex: 1; padding: 8px; text-align: center; font-size: 0.68rem; background: #0d1018; color: #334455; border-right: 1px solid #1e2535; }
 .phase:last-child { border-right: none; }
-.phase .phase-num { font-size: 0.6rem; color: #334; margin-bottom: 2px; }
-.phase .phase-name { font-weight: bold; }
+.phase .pn { font-size: 0.58rem; margin-bottom: 1px; }
+.phase .pm { font-weight: bold; }
 .phase.active { background: #1a2535; color: #7eb8f7; }
-.phase.active .phase-num { color: #4a7ab5; }
-.phase.done { background: #0e1e14; color: #5dc87a; }
-.phase.done .phase-num { color: #3a8a4a; }
+.phase.done   { background: #0e1e14; color: #5dc87a; }
 
-/* Canvas */
-.canvas-wrap { position: relative; width: 100%; background: #181c24; border: 1px solid #2a2e3a; border-radius: 6px; overflow: hidden; cursor: crosshair; touch-action: none; }
-#mainCanvas { display: block; width: 100%; height: auto; }
-#liveVideo { display: none; width: 100%; height: auto; object-fit: cover; }
-#overlayCanvas { display: none; position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; }
-.canvas-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 220px; color: #334455; font-size: 0.82rem; gap: 8px; cursor: pointer; }
+/* 影像區 */
+.video-wrap {
+  position: relative; width: 100%;
+  background: #181c24; border: 1px solid #2a2e3a;
+  border-radius: 6px; overflow: hidden;
+  min-height: 200px;
+}
+#liveVideo { display: block; width: 100%; height: auto; }
+#overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.video-placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 220px; color: #334455; font-size: 0.82rem; gap: 8px;
+}
+/* 點擊模式時 canvas 可互動 */
+.video-wrap.click-mode { cursor: crosshair; }
+.video-wrap.click-mode #overlayCanvas { pointer-events: auto; cursor: crosshair; }
 
-/* 即時列 */
-.live-bar { display: none; background: #0a1a0a; border: 1px solid #2a5a2a; border-radius: 5px; padding: 8px 12px; gap: 10px; align-items: center; }
-.live-bar.show { display: flex; }
-.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #3a8a3a; box-shadow: 0 0 6px #3a8a3a; animation: pulse 1s infinite; }
+/* 即時狀態列 */
+.live-status {
+  display: flex; align-items: center; gap: 8px;
+  background: #0a1a0a; border: 1px solid #2a5a2a;
+  border-radius: 5px; padding: 7px 12px; font-size: 0.72rem;
+}
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #5dc87a; box-shadow: 0 0 6px #5dc87a; animation: pulse 1s infinite; flex-shrink: 0; }
+.live-dot.off { background: #445566; box-shadow: none; animation: none; }
 @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
-.live-label { font-size: 0.72rem; color: #5dc87a; }
-.live-fps { font-size: 0.68rem; color: #3a6a3a; margin-left: auto; }
+.live-txt { color: #5dc87a; flex: 1; }
+.live-txt.off { color: #445566; }
+.live-fps { font-size: 0.65rem; color: #3a6a3a; }
 
-/* 按鈕 */
-.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.btn { padding: 10px 14px; border: 1px solid #2e3a50; border-radius: 5px; background: #181e2c; color: #8ab4e8; font-family: inherit; font-size: 0.76rem; cursor: pointer; transition: background 0.15s; white-space: nowrap; min-height: 42px; }
-.btn:hover:not(:disabled),.btn:active:not(:disabled) { background: #1e2840; border-color: #4a7ab5; }
+/* 控制 */
+.controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  padding: 10px 14px; border: 1px solid #2e3a50; border-radius: 5px;
+  background: #181e2c; color: #8ab4e8;
+  font-family: inherit; font-size: 0.76rem; cursor: pointer;
+  white-space: nowrap; min-height: 42px; transition: all 0.15s;
+}
+.btn:active:not(:disabled) { background: #1e2840; }
 .btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.btn.red   { background: #2a1010; border-color: #aa3333; color: #ff9090; }
-.btn.blue  { background: #101828; border-color: #3366aa; color: #88bbff; }
-.btn.green { background: #0e1e14; border-color: #3a8a4a; color: #7fd4a0; }
-.btn.green.on { background: #1a3a1a; border-color: #5aaa6a; }
-.btn.active-manual { background: #1e3050; border-color: #5588cc; color: #aaccff; }
-.btn.click-mode { background: #1e3a28; border-color: #3a8a4a; color: #7fd4a0; animation: blink 1s infinite; }
+.btn.red    { background: #2a1010; border-color: #aa3333; color: #ff9090; }
+.btn.blue   { background: #101828; border-color: #3366aa; color: #88bbff; }
+.btn.green  { background: #0e1e14; border-color: #3a8a4a; color: #7fd4a0; }
+.btn.green.on { background: #1a3a1a; border-color: #5aaa6a; box-shadow: 0 0 8px #3a8a3a44; }
+.btn.click-active { background: #1e3a28; border-color: #3a8a4a; color: #7fd4a0; animation: blink 0.8s infinite; }
 @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.6} }
-label.file-btn { padding: 10px 14px; border: 1px solid #2e3a50; border-radius: 5px; background: #181e2c; color: #8ab4e8; font-size: 0.76rem; cursor: pointer; white-space: nowrap; min-height: 42px; display: flex; align-items: center; }
-label.file-btn:active { background: #1e2840; }
-input[type=file] { display: none; }
 .divider { flex: 1; min-width: 4px; }
-.cal-row { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: #445566; flex-wrap: wrap; }
-.cal-row input[type=number] { width: 60px; padding: 6px; background: #181e2c; border: 1px solid #2e3a50; border-radius: 3px; color: #8ab4e8; font-family: inherit; font-size: 0.72rem; text-align: center; }
-.cal-tip { font-size: 0.63rem; color: #334455; width: 100%; line-height: 1.5; }
 
-/* Hint */
-.mode-hint { font-size: 0.74rem; color: #556677; padding: 8px 12px; background: #13161e; border-radius: 4px; border-left: 3px solid #2a3a5a; line-height: 1.6; }
-.mode-hint.red  { border-left-color: #cc4444; color: #ffaaaa; }
-.mode-hint.blue { border-left-color: #4488cc; color: #aaccff; }
-.mode-hint.ok   { border-left-color: #44aa66; color: #88ddaa; }
-.mode-hint.ai   { border-left-color: #aa88ff; color: #ccbbff; }
-.mode-hint.err  { border-left-color: #cc5555; color: #ffbbbb; }
+/* 提示 */
+.hint { font-size: 0.73rem; color: #556677; padding: 7px 12px; background: #13161e; border-radius: 4px; border-left: 3px solid #2a3a5a; line-height: 1.6; }
+.hint.red  { border-left-color: #cc4444; color: #ffaaaa; }
+.hint.blue { border-left-color: #4488cc; color: #aaccff; }
+.hint.ok   { border-left-color: #44aa66; color: #88ddaa; }
+.hint.err  { border-left-color: #cc5555; color: #ffbbbb; }
 
-/* AI 狀態 */
-.ai-status { display: none; background: #13101e; border: 1px solid #3a2a5a; border-radius: 5px; padding: 8px 12px; font-size: 0.74rem; color: #9988cc; gap: 8px; align-items: center; }
-.ai-status.show { display: flex; }
-.ai-spinner { width: 14px; height: 14px; border: 2px solid #3a2a5a; border-top-color: #9988cc; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* 確認 */
-.ai-confirm { display: none; background: #0d0d18; border: 1px solid #2a2050; border-radius: 5px; padding: 10px 12px; gap: 8px; flex-direction: column; }
-.ai-confirm.show { display: flex; }
-.ai-confirm-text { font-size: 0.72rem; color: #6677aa; line-height: 1.7; }
-.ai-confirm-text b { color: #9988cc; }
-.ai-confirm-text .warn { color: #ffcc66; }
-.ai-confirm-btns { display: flex; gap: 8px; }
-.confirm-yes { flex: 1; padding: 10px; border: 1px solid #44aa66; border-radius: 4px; background: #0e1e14; color: #7fd4a0; font-family: inherit; font-size: 0.78rem; cursor: pointer; }
-.confirm-no  { padding: 10px 14px; border: 1px solid #443344; border-radius: 4px; background: #13101a; color: #887799; font-family: inherit; font-size: 0.78rem; cursor: pointer; }
-
-/* 刀口鎖定 */
-.knife-locked { display: none; background: #0e1a12; border: 1px solid #2a5a3a; border-radius: 5px; padding: 8px 12px; font-size: 0.72rem; color: #5dc87a; gap: 8px; align-items: center; flex-wrap: wrap; }
-.knife-locked.show { display: flex; }
-.btn.unlock { padding: 6px 10px; font-size: 0.68rem; border-color: #7a4444; color: #cc8888; background: #1a0e0e; min-height: unset; }
+/* 鎖定狀態 */
+.locked-bar { display: none; background: #0e1a12; border: 1px solid #2a5a3a; border-radius: 5px; padding: 7px 12px; font-size: 0.72rem; color: #5dc87a; gap: 8px; align-items: center; }
+.locked-bar.show { display: flex; }
+.btn.unlock { padding: 5px 10px; font-size: 0.66rem; border-color: #7a4444; color: #cc8888; background: #1a0e0e; min-height: unset; }
 
 /* 圖例 */
-.legend { display: flex; gap: 12px; flex-wrap: wrap; background: #0d1018; border: 1px solid #1e2535; border-radius: 5px; padding: 8px 12px; }
-.legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.68rem; color: #556677; }
-.legend-line { width: 24px; height: 3px; border-radius: 2px; }
-.legend-line.red   { background: #ff5555; }
-.legend-line.blue-bright { background: #55aaff; }
-.legend-line.blue-dark { background: #1a3a5a; border: 1px dashed #335577; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; background: #0d1018; border: 1px solid #1e2535; border-radius: 5px; padding: 7px 12px; }
+.leg { display: flex; align-items: center; gap: 5px; font-size: 0.66rem; color: #556677; }
+.leg-line { width: 22px; height: 3px; border-radius: 1px; }
+.leg-line.red  { background: #ff5555; }
+.leg-line.bhi  { background: #55aaff; }
+.leg-line.blo  { background: #1a3a5a; border: 1px dashed #335577; }
 
-/* 數值 */
-.metrics-panel { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.metric-card { background: #13161e; border: 1px solid #1e2535; border-radius: 5px; padding: 10px; }
-.metric-label { font-size: 0.58rem; letter-spacing: 0.1em; color: #445566; text-transform: uppercase; margin-bottom: 3px; }
-.metric-value { font-size: 1.3rem; font-weight: bold; color: #7eb8f7; }
-.metric-value.good { color: #5dc87a; }
-.metric-value.warn { color: #e8c060; }
-.metric-value.bad  { color: #e86060; }
-.metric-sub { font-size: 0.58rem; color: #334455; margin-top: 2px; line-height: 1.4; }
+/* 數值面板 */
+.metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.mc { background: #13161e; border: 1px solid #1e2535; border-radius: 5px; padding: 10px; }
+.ml { font-size: 0.56rem; letter-spacing: 0.1em; color: #445566; text-transform: uppercase; margin-bottom: 3px; }
+.mv { font-size: 1.35rem; font-weight: bold; color: #7eb8f7; }
+.mv.good { color: #5dc87a; }
+.mv.warn { color: #e8c060; }
+.mv.bad  { color: #e86060; }
+.ms { font-size: 0.56rem; color: #334455; margin-top: 2px; }
 
 /* 判斷 */
-.verdict { background: #13161e; border: 1px solid #1e2535; border-radius: 5px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; font-size: 0.78rem; }
-.verdict-dot { width: 10px; height: 10px; border-radius: 50%; background: #334455; flex-shrink: 0; }
-.verdict-dot.good { background: #5dc87a; box-shadow: 0 0 8px #5dc87a99; }
-.verdict-dot.warn { background: #e8c060; box-shadow: 0 0 8px #e8c06099; }
-.verdict-dot.bad  { background: #e86060; box-shadow: 0 0 8px #e8606099; }
-.verdict-text { color: #7a8a9a; line-height: 1.5; }
+.verdict { background: #13161e; border: 1px solid #1e2535; border-radius: 5px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; font-size: 0.76rem; }
+.vdot { width: 10px; height: 10px; border-radius: 50%; background: #334455; flex-shrink: 0; }
+.vdot.good { background: #5dc87a; box-shadow: 0 0 8px #5dc87a99; }
+.vdot.warn { background: #e8c060; box-shadow: 0 0 8px #e8c06099; }
+.vdot.bad  { background: #e86060; box-shadow: 0 0 8px #e8606099; }
+.vtxt { color: #7a8a9a; line-height: 1.5; }
+
+/* 校準 */
+.cal { display: flex; align-items: center; gap: 6px; font-size: 0.7rem; color: #445566; flex-wrap: wrap; }
+.cal input { width: 58px; padding: 5px; background: #181e2c; border: 1px solid #2e3a50; border-radius: 3px; color: #8ab4e8; font-family: inherit; font-size: 0.7rem; text-align: center; }
+.cal-tip { font-size: 0.6rem; color: #334455; width: 100%; }
 </style>
 </head>
 <body>
-<h1>⚙ 剪床對位輔助系統</h1>
-<p class="subtitle">v9.0 — 8段刀口曲線 + 點擊輔助畫線定位 + 樣條曲線 + 即時攝影機</p>
+<h1>⚙ 剪床對位 — 即時版</h1>
+<p class="subtitle">v1.0 — 即時攝影機 + 刀口鎖定 + 畫線追蹤 + 即時偏差</p>
 
 <div class="workspace">
 
-  <div class="apikey-row">
-    <label>API Key：</label>
-    <div class="apikey-input-wrap">
-      <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off">
-      <button class="btn-save-key" onclick="saveKey()">💾 記住</button>
-    </div>
-    <div class="key-status" id="keyStatus">🔒 Key 僅存於本機（AI輔助定位才需要）</div>
-  </div>
-
+  <!-- 階段 -->
   <div class="phase-bar">
-    <div class="phase active" id="phase1"><div class="phase-num">STEP 1</div><div class="phase-name">🔴 鎖定刀口</div></div>
-    <div class="phase" id="phase2"><div class="phase-num">STEP 2</div><div class="phase-name">🔵 定位畫線</div></div>
+    <div class="phase active" id="ph1"><div class="pn">STEP 1</div><div class="pm">🔴 鎖定刀口</div></div>
+    <div class="phase" id="ph2"><div class="pn">STEP 2</div><div class="pm">🔵 追蹤畫線</div></div>
+    <div class="phase" id="ph3"><div class="pn">STEP 3</div><div class="pm">📏 即時對位</div></div>
   </div>
 
-  <div class="canvas-wrap" id="canvasWrap">
-    <div class="canvas-placeholder" id="placeholder" onclick="document.getElementById('fileInput1').click()">
+  <!-- 影像 -->
+  <div class="video-wrap" id="videoWrap">
+    <div class="video-placeholder" id="placeholder">
       <svg width="44" height="44" viewBox="0 0 48 48" fill="none">
-        <rect x="6" y="10" width="36" height="28" rx="3" stroke="#446" stroke-width="1.5"/>
-        <circle cx="18" cy="20" r="4" stroke="#446" stroke-width="1.5"/>
-        <polyline points="6,32 16,22 24,30 32,20 42,32" stroke="#446" stroke-width="1.5" fill="none"/>
+        <rect x="4" y="8" width="40" height="28" rx="3" stroke="#446" stroke-width="1.5"/>
+        <circle cx="24" cy="22" r="7" stroke="#446" stroke-width="1.5"/>
+        <rect x="18" y="4" width="12" height="5" rx="1.5" stroke="#446" stroke-width="1.5"/>
       </svg>
-      <span>點擊拍照</span>
-      <span style="font-size:0.63rem;color:#334">STEP 1：先拍剪床刀口（鎳板未放入）</span>
+      <span>按「開啟攝影機」開始</span>
     </div>
-    <video id="liveVideo" autoplay playsinline muted></video>
-    <canvas id="mainCanvas" style="display:none;"></canvas>
-    <canvas id="overlayCanvas"></canvas>
+    <video id="liveVideo" autoplay playsinline muted style="display:none;"></video>
+    <canvas id="overlayCanvas" style="display:none;"></canvas>
   </div>
 
-  <!-- 即時列 -->
-  <div class="live-bar" id="liveBar">
-    <div class="live-dot"></div>
-    <span class="live-label">即時偵測中</span>
-    <span class="live-fps" id="liveFps">— fps</span>
-    <div class="divider"></div>
-    <button class="btn unlock" onclick="stopLive()">■ 停止</button>
+  <!-- 即時狀態列 -->
+  <div class="live-status">
+    <div class="live-dot off" id="liveDot"></div>
+    <span class="live-txt off" id="liveTxt">攝影機未開啟</span>
+    <span class="live-fps" id="liveFps"></span>
   </div>
 
   <!-- STEP 1 控制 -->
   <div class="controls" id="ctrl1">
-    <label class="file-btn" for="fileInput1">📷 拍攝刀口</label>
-    <input type="file" id="fileInput1" accept="image/*" capture="environment">
-    <button class="btn green" id="btnLive" onclick="toggleLive()">📹 即時攝影機</button>
-    <button class="btn red" id="btnFindKnife" onclick="findKnifeOtsu()" disabled>🔍 偵測刀口</button>
-    <button class="btn" id="btnManualKnife" onclick="setMode('knife')" disabled>✏ 手動標記</button>
+    <button class="btn green" id="btnCam" onclick="toggleCam()">📹 開啟攝影機</button>
+    <button class="btn red" id="btnKnife" onclick="detectKnife()" disabled>🔍 辨識刀口</button>
+    <button class="btn" id="btnManualKnife" onclick="startManual('knife')" disabled>✏ 手動刀口</button>
+  </div>
+
+  <!-- 刀口鎖定列 -->
+  <div class="locked-bar" id="knifeLocked">
+    <span>🔒</span>
+    <span id="knifeLockedTxt">刀口已鎖定</span>
+    <div class="divider"></div>
+    <button class="btn unlock" onclick="resetKnife()">解鎖重設</button>
   </div>
 
   <!-- STEP 2 控制 -->
   <div class="controls" id="ctrl2" style="display:none;">
-    <label class="file-btn" for="fileInput2">📷 拍攝鎳板</label>
-    <input type="file" id="fileInput2" accept="image/*" capture="environment">
-    <button class="btn blue" id="btnClickMark" onclick="enterMarkClickMode()" disabled>👆 點擊畫線定位</button>
-    <button class="btn blue" id="btnAIMark" onclick="findMarkAI()" disabled>🤖 AI 精確定位</button>
-    <button class="btn" id="btnManualMark" onclick="setMode('mark')" disabled>✏ 手動標記</button>
-    <button class="btn" onclick="resetToStep1()" style="font-size:0.72rem;">🔄 重設刀口</button>
+    <button class="btn blue" id="btnClickMark" onclick="startMarkClick()">👆 點擊畫線定位</button>
+    <button class="btn" id="btnManualMark" onclick="startManual('mark')">✏ 手動畫線</button>
+    <button class="btn" onclick="resetMark()" style="font-size:0.7rem;">🔄 重設畫線</button>
   </div>
 
-  <!-- 圖例 -->
-  <div class="legend" id="legendBox" style="display:none;">
-    <div class="legend-item"><div class="legend-line red"></div><span>刀口基準線</span></div>
-    <div class="legend-item"><div class="legend-line blue-bright"></div><span>畫線（實測段）</span></div>
-    <div class="legend-item"><div class="legend-line blue-dark"></div><span>畫線（延伸段，用於比對）</span></div>
+  <!-- 圖例（有資料後才顯示）-->
+  <div class="legend" id="legend" style="display:none;">
+    <div class="leg"><div class="leg-line red"></div><span>刀口基準線（鎖定）</span></div>
+    <div class="leg"><div class="leg-line bhi"></div><span>畫線實測段</span></div>
+    <div class="leg"><div class="leg-line blo"></div><span>畫線延伸段（用於比對）</span></div>
   </div>
 
-  <!-- 寬度校準 -->
-  <div class="cal-row">
+  <div class="cal">
     <span>畫面實際寬度：</span>
     <input type="number" id="realWidth" value="200" min="10" max="2000">
     <span>mm</span>
-    <span class="cal-tip">請用尺量拍攝畫面的實際寬度填入，固定架設後只需校準一次。</span>
+    <span class="cal-tip">用尺量拍攝畫面實際寬度，固定架設後只需校準一次。</span>
   </div>
 
-  <div class="mode-hint" id="modeHint">STEP 1：拍攝刀口圖片（鎳板未放入），按「偵測刀口」。</div>
-  <div class="ai-status" id="aiStatus"><div class="ai-spinner"></div><span id="aiStatusText">偵測中…</span></div>
+  <div class="hint" id="hint">請先按「開啟攝影機」。</div>
 
-  <div class="ai-confirm" id="aiConfirm">
-    <div class="ai-confirm-text" id="aiConfirmText"></div>
-    <div class="ai-confirm-btns">
-      <button class="confirm-yes" onclick="applyPending()">✅ 確認套用</button>
-      <button class="confirm-no"  onclick="discardPending()">✕ 捨棄</button>
-    </div>
-  </div>
-
-  <div class="knife-locked" id="knifeLocked">
-    <span>🔒</span><span id="knifeLockedText">刀口已鎖定</span>
-    <div class="divider"></div>
-    <button class="btn unlock" onclick="resetToStep1()">解鎖重設</button>
-  </div>
-
-  <div class="metrics-panel">
-    <div class="metric-card"><div class="metric-label">左側偏移</div><div class="metric-value" id="valLeft">—</div><div class="metric-sub" id="subLeft">畫線 vs 刀口</div></div>
-    <div class="metric-card"><div class="metric-label">右側偏移</div><div class="metric-value" id="valRight">—</div><div class="metric-sub" id="subRight">畫線 vs 刀口</div></div>
-    <div class="metric-card"><div class="metric-label">平行度差</div><div class="metric-value" id="valParallel">—</div><div class="metric-sub">左右差值</div></div>
+  <!-- 數值 -->
+  <div class="metrics">
+    <div class="mc"><div class="ml">左側偏移</div><div class="mv" id="vL">—</div><div class="ms" id="sL">畫線 vs 刀口</div></div>
+    <div class="mc"><div class="ml">右側偏移</div><div class="mv" id="vR">—</div><div class="ms" id="sR">畫線 vs 刀口</div></div>
+    <div class="mc"><div class="ml">平行度差</div><div class="mv" id="vP">—</div><div class="ms">左右差值</div></div>
   </div>
 
   <div class="verdict">
-    <div class="verdict-dot" id="verdictDot"></div>
-    <div class="verdict-text" id="verdictText">完成兩個步驟後顯示量測結果</div>
+    <div class="vdot" id="vdot"></div>
+    <div class="vtxt" id="vtxt">完成兩個步驟後即時顯示量測結果</div>
   </div>
 
 </div>
 
 <script>
 // ─── 狀態 ─────────────────────────────────────────────────────────────────
-let img1=null,img1B64=null,img1Mime='image/jpeg';
-let img2=null,img2B64=null,img2Mime='image/jpeg';
-let canvasW=0,canvasH=0;
-const canvas=document.getElementById('mainCanvas');
-const ctx=canvas.getContext('2d');
-const overlay=document.getElementById('overlayCanvas');
-const octx=overlay.getContext('2d');
-const video=document.getElementById('liveVideo');
-let currentStep=1;
-let knifePoints=null;   // {xs,ys} 8段曲線點
-let knifeLinear=null;   // {p1,p2} 量測用直線
-let markData=null;      // {segXs,segYs,segValid,spline,regrLine} 畫線資料
-let pendingPoints=null;
-let mode='none',tempPoint=null,manualBuf=[];
-let markClickMode=false;
-let liveStream=null,liveRunning=false,liveRAF=null;
-let lastFpsTime=0,frameCount=0;
+const video   = document.getElementById('liveVideo');
+const overlay = document.getElementById('overlayCanvas');
+const octx    = overlay.getContext('2d');
+let W=0, H=0;
+let stream=null, running=false, raf=null;
+let frameCount=0, lastFpsT=0;
 
-// ─── 初始化 ───────────────────────────────────────────────────────────────
-(function(){
-  const saved=localStorage.getItem('shear_api_key');
-  if(saved){ document.getElementById('apiKey').value=saved; setKeyStatus('✅ 已載入儲存的 API Key',true); }
-})();
-function saveKey(){
-  const k=document.getElementById('apiKey').value.trim();
-  if(!k||!k.startsWith('sk-ant-')){ setKeyStatus('⚠ 格式不正確',false); return; }
-  localStorage.setItem('shear_api_key',k); setKeyStatus('✅ 已儲存',true);
-}
-function setKeyStatus(msg,ok){ const el=document.getElementById('keyStatus'); el.textContent=msg; el.className='key-status'+(ok?' saved':''); }
+// 刀口（鎖定後不動）
+let knifeData = null;   // { xs, ys } 8段控制點
+let knifeLinear = null; // { p1, p2 } 量測用直線
 
-// ─── 載入圖片 ─────────────────────────────────────────────────────────────
-document.getElementById('fileInput1').addEventListener('change',e=>loadImg(e.target.files[0],1));
-document.getElementById('fileInput2').addEventListener('change',e=>loadImg(e.target.files[0],2));
+// 畫線（持續追蹤，每幀重新掃描）
+let markAnchorY = null; // 點擊後的初始 Y 基準
+let markData = null;    // { segXs, segYs, segValid, spline, regrLine }
 
-function loadImg(file,step){
-  if(!file) return;
-  stopLive();
-  const mime=file.type||'image/jpeg';
-  const reader=new FileReader();
-  reader.onload=ev=>{
-    const b64=ev.target.result.split(',')[1];
-    const image=new Image();
-    image.onload=()=>{
-      if(step===1){
-        img1=image; img1B64=b64; img1Mime=mime; markData=null;
-        setupCanvas(image);
-        document.getElementById('btnFindKnife').disabled=false;
-        document.getElementById('btnManualKnife').disabled=false;
-        setHint('圖片已載入，按「偵測刀口」。','red');
-      } else {
-        img2=image; img2B64=b64; img2Mime=mime; markData=null;
-        setupCanvas(image);
-        enableMarkButtons();
-        setHint('鎳板圖片已載入，按「點擊畫線定位」或「AI 精確定位」。','blue');
-      }
-      discardPending(); draw();
-    };
-    image.src=ev.target.result;
-  };
-  reader.readAsDataURL(file);
-}
+let manualMode = 'none'; // 'knife' | 'mark' | 'none'
+let manualBuf = [];
+let markClickPending = false;
 
-function setupCanvas(image){
-  const wrap=document.getElementById('canvasWrap');
-  const maxW=wrap.clientWidth||900;
-  const scale=Math.min(1,maxW/image.width);
-  canvasW=Math.round(image.width*scale); canvasH=Math.round(image.height*scale);
-  canvas.width=canvasW; canvas.height=canvasH;
-  overlay.width=canvasW; overlay.height=canvasH;
-  overlay.style.width='100%';
-  canvas.style.display='block'; document.getElementById('canvas-placeholder')&&(document.getElementById('canvas-placeholder').style.display='none');
-  document.getElementById('placeholder').style.display='none';
-}
-
-function enableMarkButtons(){
-  document.getElementById('btnClickMark').disabled=false;
-  document.getElementById('btnAIMark').disabled=false;
-  document.getElementById('btnManualMark').disabled=false;
-}
-
-// ─── 即時攝影機 ───────────────────────────────────────────────────────────
-async function toggleLive(){
-  if(liveRunning){ stopLive(); return; }
+// ─── 攝影機 ───────────────────────────────────────────────────────────────
+async function toggleCam(){
+  if(running){ stopCam(); return; }
   try{
-    liveStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
-    video.srcObject=liveStream; video.style.display='block'; canvas.style.display='none';
-    document.getElementById('placeholder').style.display='none';
-    document.getElementById('liveBar').classList.add('show');
-    document.getElementById('btnLive').className='btn green on';
-    document.getElementById('btnLive').textContent='📹 即時中';
-    video.onloadedmetadata=()=>{
-      const wrap=document.getElementById('canvasWrap');
-      const scale=Math.min(1,(wrap.clientWidth||900)/video.videoWidth);
-      canvasW=Math.round(video.videoWidth*scale); canvasH=Math.round(video.videoHeight*scale);
-      canvas.width=canvasW; canvas.height=canvasH;
-      overlay.width=canvasW; overlay.height=canvasH;
-      overlay.style.width='100%'; overlay.style.display='block';
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:'environment', width:{ideal:1280}, height:{ideal:720} }
+    });
+    video.srcObject = stream;
+    video.style.display = 'block';
+    document.getElementById('placeholder').style.display = 'none';
+    video.onloadedmetadata = () => {
+      const wrap = document.getElementById('videoWrap');
+      const scale = Math.min(1, (wrap.clientWidth||900) / video.videoWidth);
+      W = Math.round(video.videoWidth  * scale);
+      H = Math.round(video.videoHeight * scale);
+      overlay.width=W; overlay.height=H;
+      overlay.style.display='block';
+      overlay.style.width='100%';
     };
-    liveRunning=true;
-    document.getElementById('btnFindKnife').disabled=false;
+    running = true;
+    document.getElementById('btnCam').className='btn green on';
+    document.getElementById('btnCam').textContent='📹 攝影機開啟中';
+    document.getElementById('btnKnife').disabled=false;
     document.getElementById('btnManualKnife').disabled=false;
-    liveLoop();
-    setHint('📹 即時攝影機已開啟。按「偵測刀口」鎖定。','ok');
-  } catch(err){ setHint('⚠ 無法開啟攝影機：'+err.message,'err'); }
+    setLiveStatus(true,'攝影機已開啟');
+    setHint('STEP 1：放入剪床（不放鎳板），按「辨識刀口」鎖定刀口基準線。','red');
+    loop();
+  } catch(e){ setHint('⚠ 無法開啟攝影機：'+e.message,'err'); }
 }
 
-function stopLive(){
-  if(liveStream){ liveStream.getTracks().forEach(t=>t.stop()); liveStream=null; }
-  liveRunning=false; if(liveRAF){ cancelAnimationFrame(liveRAF); liveRAF=null; }
-  video.style.display='none'; video.srcObject=null; overlay.style.display='none';
-  document.getElementById('liveBar').classList.remove('show');
-  document.getElementById('btnLive').className='btn green';
-  document.getElementById('btnLive').textContent='📹 即時攝影機';
-  if(img1){ canvas.style.display='block'; }
+function stopCam(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  running=false; if(raf){ cancelAnimationFrame(raf); raf=null; }
+  video.style.display='none'; video.srcObject=null;
+  overlay.style.display='none';
+  document.getElementById('btnCam').className='btn green';
+  document.getElementById('btnCam').textContent='📹 開啟攝影機';
+  setLiveStatus(false,'攝影機已關閉');
 }
 
-function liveLoop(){
-  if(!liveRunning) return;
+// ─── 主迴圈 ───────────────────────────────────────────────────────────────
+function loop(){
+  if(!running){ return; }
   frameCount++;
   const now=performance.now();
-  if(now-lastFpsTime>1000){ document.getElementById('liveFps').textContent=frameCount+' fps'; frameCount=0; lastFpsTime=now; }
-  octx.clearRect(0,0,canvasW,canvasH);
-  if(knifeLinear) drawLineOnCtx(octx,knifeLinear.p1,knifeLinear.p2,'#ff5555','刀口基準');
-  if(markData) drawMarkOnCtx(octx);
-  if(knifeLinear&&markData) { updateMetrics(); }
-  liveRAF=requestAnimationFrame(liveLoop);
+  if(now-lastFpsT>1000){
+    document.getElementById('liveFps').textContent=frameCount+' fps';
+    frameCount=0; lastFpsT=now;
+  }
+
+  // 把 video 畫到隱藏 canvas 取像素（僅在需要時）
+  octx.clearRect(0,0,W,H);
+
+  // 1. 畫刀口線（已鎖定，直接畫）
+  if(knifeData) drawKnifeCurve();
+  else if(knifeLinear) drawLine(knifeLinear.p1, knifeLinear.p2, '#ff5555', '刀口基準');
+
+  // 2. 畫線追蹤（有基準 Y 就每幀重新掃描）
+  if(markAnchorY!==null && knifeLinear){
+    const frameData = getFramePixels();
+    if(frameData){
+      const result = scanMarkLine(frameData, markAnchorY);
+      if(result){ markData=result; }
+    }
+  }
+  if(markData) drawMarkLines();
+
+  // 3. 即時量測
+  if(knifeLinear && markData) calcAndShowMetrics();
+
+  // 4. 手動標記暫時點
+  drawManualTemp();
+
+  raf = requestAnimationFrame(loop);
+}
+
+// ─── 取得當前幀像素 ───────────────────────────────────────────────────────
+let offCanvas=null, offCtx=null;
+function getFramePixels(){
+  if(!offCanvas){ offCanvas=document.createElement('canvas'); offCtx=offCanvas.getContext('2d'); }
+  offCanvas.width=W; offCanvas.height=H;
+  offCtx.drawImage(video,0,0,W,H);
+  return offCtx.getImageData(0,0,W,H);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// STEP 1：Otsu + 水平投影 + 8段曲線擬合
+// STEP 1：辨識刀口（一次性，鎖定後不動）
 // ══════════════════════════════════════════════════════════════════════════
-function findKnifeOtsu(){
-  showAiStatus('Otsu 二值化 + 8段曲線擬合…');
-  const oc=document.createElement('canvas'); oc.width=canvasW; oc.height=canvasH;
-  const oc2=oc.getContext('2d');
-  if(liveRunning) oc2.drawImage(video,0,0,canvasW,canvasH);
-  else oc2.drawImage(img1,0,0,canvasW,canvasH);
-  const rgba=oc2.getImageData(0,0,canvasW,canvasH).data;
-  const gray=new Uint8Array(canvasW*canvasH);
-  for(let i=0;i<canvasW*canvasH;i++) gray[i]=Math.round(rgba[i*4]*0.299+rgba[i*4+1]*0.587+rgba[i*4+2]*0.114);
-  const blurred=gaussBlur2D(gray,canvasW,canvasH,11);
-  const threshold=otsuThreshold(blurred);
-  const xL=Math.floor(canvasW*0.25),xR=Math.floor(canvasW*0.75);
-  const rowWhite=new Float32Array(canvasH);
-  for(let y=0;y<canvasH;y++){ let c=0; for(let x=xL;x<xR;x++) if(blurred[y*canvasW+x]>threshold) c++; rowWhite[y]=c/(xR-xL); }
-  const sr=gaussSmooth1D(rowWhite,8);
-  const grad=new Float32Array(canvasH);
-  for(let y=2;y<canvasH-2;y++) grad[y]=sr[y-2]-sr[y+2];
-  const ym=Math.floor(canvasH*0.05);
-  let bestY=Math.floor(canvasH/2),bestG=0;
-  for(let y=ym;y<canvasH-ym;y++) if(grad[y]>bestG){ bestG=grad[y]; bestY=y; }
-  const SEGS=8; const segXs=[],segYs=[];
+function detectKnife(){
+  if(!running){ setHint('⚠ 請先開啟攝影機。','err'); return; }
+  setHint('🔍 辨識刀口中…','red');
+  const fd=getFramePixels(); if(!fd) return;
+  const data=fd.data;
+  const gray=new Uint8Array(W*H);
+  for(let i=0;i<W*H;i++) gray[i]=Math.round(data[i*4]*0.299+data[i*4+1]*0.587+data[i*4+2]*0.114);
+  const blurred=gBlur2D(gray,W,H,11);
+  const thr=otsu(blurred);
+  const xL=Math.floor(W*0.25), xR=Math.floor(W*0.75);
+  const rw=new Float32Array(H);
+  for(let y=0;y<H;y++){ let c=0; for(let x=xL;x<xR;x++) if(blurred[y*W+x]>thr) c++; rw[y]=c/(xR-xL); }
+  const sr=gSmooth1D(rw,8);
+  const grad=new Float32Array(H);
+  for(let y=2;y<H-2;y++) grad[y]=sr[y-2]-sr[y+2];
+  const ym=Math.floor(H*0.05);
+  let bY=Math.floor(H/2),bG=0;
+  for(let y=ym;y<H-ym;y++) if(grad[y]>bG){ bG=grad[y]; bY=y; }
+
+  // 8段曲線
+  const SEGS=8; const sXs=[],sYs=[];
   for(let s=0;s<SEGS;s++){
-    const sx=Math.floor(canvasW*(0.05+s*0.9/SEGS)), ex=Math.floor(canvasW*(0.05+(s+1)*0.9/SEGS));
-    segXs.push((sx+ex)/2); segYs.push(findEdgeInColumn(blurred,sx,ex,bestY,canvasW,canvasH));
+    const sx=Math.floor(W*(0.05+s*0.9/SEGS)), ex=Math.floor(W*(0.05+(s+1)*0.9/SEGS));
+    sXs.push((sx+ex)/2); sYs.push(findEdge(blurred,sx,ex,bY,W,H));
   }
-  const {slope,intercept}=linReg(segXs,segYs);
-  const lx=Math.floor(canvasW*0.05),rx=Math.floor(canvasW*0.95);
-  knifePoints={xs:segXs,ys:segYs};
-  knifeLinear={p1:{x:lx,y:Math.round(slope*lx+intercept)},p2:{x:rx,y:Math.round(slope*rx+intercept)}};
-  hideAiStatus();
-  pendingPoints={type:'knife',p1:knifeLinear.p1,p2:knifeLinear.p2};
-  if(!liveRunning) drawWithPending();
-  const yPct=Math.round(bestY/canvasH*100);
-  showAiConfirm(`<b>刀口偵測結果：</b>位於圖片高度 ${yPct}%<br><span class="warn">請確認紅色預覽線是否貼合刀口邊緣。</span>`);
-  setHint('請確認預覽線位置後套用。','ai');
+  const {slope:sl,intercept:ic}=linReg(sXs,sYs);
+  const lx=Math.floor(W*0.05), rx=Math.floor(W*0.95);
+  knifeData={xs:sXs,ys:sYs};
+  knifeLinear={p1:{x:lx,y:Math.round(sl*lx+ic)},p2:{x:rx,y:Math.round(sl*rx+ic)}};
+
+  lockKnife();
 }
-
-// ══════════════════════════════════════════════════════════════════════════
-// STEP 2a：點擊輔助畫線定位
-// ══════════════════════════════════════════════════════════════════════════
-function enterMarkClickMode(){
-  if(!knifeLinear){ setHint('⚠ 請先完成 STEP 1 鎖定刀口。','err'); return; }
-  markClickMode=true;
-  document.getElementById('btnClickMark').className='btn blue click-mode';
-  document.getElementById('btnClickMark').textContent='👆 點擊中…';
-  setHint('👆 請點擊圖片中藍色/紫色畫線的位置（點附近就好，程式自動精確定位）。','blue');
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// STEP 2b：Claude AI 精確定位畫線
-// ══════════════════════════════════════════════════════════════════════════
-async function findMarkAI(){
-  if(!knifeLinear){ setHint('⚠ 請先完成 STEP 1。','err'); return; }
-  const apiKey=getApiKey(); if(!apiKey) return;
-  let b64,mime;
-  if(liveRunning){ b64=captureFrame(); mime='image/jpeg'; }
-  else if(img2B64){ b64=img2B64; mime=img2Mime; }
-  else{ setHint('⚠ 請先上傳鎳板圖片或開啟即時攝影機。','err'); return; }
-  showAiStatus('Claude AI 精確定位畫線…'); setHint('🤖 AI 分析中…','ai');
-  const kAvgY=Math.round((knifeLinear.p1.y+knifeLinear.p2.y)/2);
-  const prompt=`分析這張鎳板對位圖片，找出藍色或紫色麥克筆畫的橫向裁切標記線。
-刀口約在 Y=${kAvgY}px。圖片：${canvasW}×${canvasH}px，左上角原點，y向下。
-給出畫線在左側 x=${Math.round(canvasW*0.15)} 和右側 x=${Math.round(canvasW*0.85)} 的 y 座標。
-只回JSON：{"left_y":數值,"right_y":數值,"confidence":0到1,"description":"描述"}`;
-  try{
-    const r=await callClaude(apiKey,b64,mime,prompt);
-    hideAiStatus();
-    const lx=canvasW*0.15,rx=canvasW*0.85;
-    // 用 AI 結果作為點擊位置，再做像素精確定位
-    const clickX=(lx+rx)/2, clickY=(r.left_y+r.right_y)/2;
-    const pixelResult=locateMarkFromPoint(clickX, clickY, liveRunning?captureFrameData():getImg2Data());
-    if(pixelResult){
-      pendingPoints={type:'mark',...pixelResult};
-    } else {
-      pendingPoints={type:'mark',segXs:[lx,rx],segYs:[r.left_y,r.right_y],segValid:[true,true]};
-    }
-    drawWithPending();
-    showAiConfirm(`<b>AI + 像素精確定位：</b>信心 ${Math.round(r.confidence*100)}%<br>${r.description}<br><span class="warn">請確認藍色預覽線是否貼合麥克筆跡。</span>`);
-    setHint('請確認預覽線位置後套用。','ai');
-  } catch(err){ hideAiStatus(); setHint('⚠ AI 失敗：'+err.message+'。請點擊定位或手動標記。','err'); }
-}
-
-// ─── 點擊事件 ─────────────────────────────────────────────────────────────
-const clickTarget=()=>liveRunning?overlay:canvas;
-document.getElementById('canvasWrap').addEventListener('click',e=>{
-  const t=clickTarget(),r=t.getBoundingClientRect();
-  const x=(e.clientX-r.left)*(canvasW/r.width), y=(e.clientY-r.top)*(canvasH/r.height);
-  if(markClickMode){ handleMarkClick(x,y); return; }
-  if(mode!=='none') handleManualPoint(x,y);
-});
-document.getElementById('canvasWrap').addEventListener('touchend',e=>{
-  e.preventDefault();
-  const touch=e.changedTouches[0],t=clickTarget(),r=t.getBoundingClientRect();
-  const x=(touch.clientX-r.left)*(canvasW/r.width), y=(touch.clientY-r.top)*(canvasH/r.height);
-  if(markClickMode){ handleMarkClick(x,y); return; }
-  if(mode!=='none') handleManualPoint(x,y);
-},{passive:false});
-
-function handleMarkClick(clickX,clickY){
-  markClickMode=false;
-  document.getElementById('btnClickMark').className='btn blue';
-  document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
-  const data=liveRunning?captureFrameData():getImg2Data();
-  if(!data) return;
-  const result=locateMarkFromPoint(clickX,clickY,data);
-  if(result){
-    pendingPoints={type:'mark',...result};
-    if(!liveRunning) drawWithPending();
-    const yPct=Math.round(result.bestY/canvasH*100);
-    showAiConfirm(`<b>點擊定位結果：</b>畫線 Y≈${result.bestY}px（圖片高度 ${yPct}%）<br>有效段：${result.validCount}/16　信心：${result.confidence}%<br><span class="warn">請確認藍色預覽線是否貼合麥克筆跡。</span>`);
-    setHint('請確認預覽線後套用。','ai');
-  }
-}
-
-// ─── 核心：點擊輔助畫線定位 + 亞像素精度 ──────────────────────────────────
-function locateMarkFromPoint(clickX, clickY, imgDataObj){
-  if(!imgDataObj) return null;
-  const data=imgDataObj.data;
-  // 1. 垂直掃描找峰值
-  const sw=Math.floor(canvasW*0.08);
-  const xC=Math.max(sw,Math.min(canvasW-sw,clickX));
-  const sr2=Math.floor(canvasH*0.28);
-  const yS=Math.max(0,clickY-sr2), yE=Math.min(canvasH-1,clickY+sr2);
-  const rowScore=new Float32Array(canvasH);
-  for(let y=yS;y<=yE;y++){
-    let score=0;
-    for(let x=xC-sw;x<xC+sw;x++){
-      const i=(y*canvasW+x)*4;
-      const r=data[i],g=data[i+1],b=data[i+2];
-      if(r+g+b>620||r+g+b<20) continue;
-      const adv=b-Math.max(r,g); if(adv>0) score+=adv;
-    }
-    rowScore[y]=score/(sw*2);
-  }
-  const smoothed=gaussSmooth1D(rowScore,5);
-  let bestY=Math.round(clickY),bestScore=0;
-  for(let y=yS;y<=yE;y++) if(smoothed[y]>bestScore){ bestScore=smoothed[y]; bestY=y; }
-
-  // 2. 16段定位 + 亞像素精度
-  const SEGS=16; const segXs=[],segYs=[],segScores=[],segValid=[];
-  for(let s=0;s<SEGS;s++){
-    const sx=Math.floor(canvasW*s/SEGS), ex=Math.floor(canvasW*(s+1)/SEGS);
-    const cx=(sx+ex)/2;
-    const lr=Math.min(35,Math.floor(canvasH*0.06));
-    let totalScore=0, weightedY=0, totalW=0, localBestScore=0;
-    for(let y=Math.max(0,bestY-lr);y<=Math.min(canvasH-1,bestY+lr);y++){
-      let sc=0,cnt=0;
-      for(let x=sx;x<ex;x++){
-        const i=(y*canvasW+x)*4;
-        const r=data[i],g=data[i+1],b=data[i+2];
-        if(r+g+b>620||r+g+b<20) continue;
-        const adv=b-Math.max(r,g); if(adv>0){ sc+=adv; cnt++; }
-      }
-      const avg=cnt>0?sc/cnt:0;
-      if(avg>localBestScore) localBestScore=avg;
-      totalScore+=sc;
-      // 亞像素加權
-      weightedY+=y*avg; totalW+=avg;
-    }
-    // 亞像素 Y 值
-    const subpixelY=totalW>0?weightedY/totalW:bestY;
-    const segW=ex-sx;
-    const valid=totalScore>segW*8&&localBestScore>5;
-    segXs.push(cx); segYs.push(subpixelY);
-    segScores.push(localBestScore); segValid.push(valid);
-  }
-
-  // 3. 線性迴歸（只用有效段）→ 延伸暗藍色線
-  const validXs=segXs.filter((_,i)=>segValid[i]);
-  const validYs=segYs.filter((_,i)=>segValid[i]);
-  let regrLine=null;
-  if(validXs.length>=2){
-    const {slope,intercept}=linReg(validXs,validYs);
-    regrLine={slope,intercept};
-  }
-
-  // 4. 插值填補無效段
-  const filledYs=[...segYs];
-  const vIdxs=segValid.map((v,i)=>v?i:-1).filter(i=>i>=0);
-  if(vIdxs.length>=2){
-    for(let i=0;i<vIdxs.length-1;i++){
-      const a=vIdxs[i],b=vIdxs[i+1];
-      for(let s=a+1;s<b;s++){ const t=(s-a)/(b-a); filledYs[s]=segYs[a]*(1-t)+segYs[b]*t; }
-    }
-    // 端點用線性迴歸外推（比用斜率外推更穩定）
-    if(regrLine){
-      for(let s=0;s<vIdxs[0];s++) filledYs[s]=regrLine.slope*segXs[s]+regrLine.intercept;
-      for(let s=vIdxs[vIdxs.length-1]+1;s<SEGS;s++) filledYs[s]=regrLine.slope*segXs[s]+regrLine.intercept;
-    }
-  }
-
-  // 5. Catmull-Rom 樣條
-  const spline=catmullRomSpline(segXs,filledYs,8);
-
-  const validCount=segValid.filter(Boolean).length;
-  const confidence=Math.min(100,Math.round(Math.min(bestScore/30,1)*50+(validCount/SEGS)*30+Math.min((segScores.filter((_,i)=>segValid[i]).reduce((a,b)=>a+b,0)/Math.max(validCount,1))/20,1)*20));
-
-  return{bestY,segXs,segYs:filledYs,segValid,spline,regrLine,validCount,confidence};
-}
-
-function getImg2Data(){
-  if(!img2) return null;
-  const oc=document.createElement('canvas'); oc.width=canvasW; oc.height=canvasH;
-  const oc2=oc.getContext('2d'); oc2.drawImage(img2,0,0,canvasW,canvasH);
-  return oc2.getImageData(0,0,canvasW,canvasH);
-}
-
-function captureFrame(){ ctx.drawImage(video,0,0,canvasW,canvasH); return canvas.toDataURL('image/jpeg',0.85).split(',')[1]; }
-function captureFrameData(){ ctx.drawImage(video,0,0,canvasW,canvasH); return ctx.getImageData(0,0,canvasW,canvasH); }
-
-// ─── 套用 / 捨棄 ──────────────────────────────────────────────────────────
-function applyPending(){
-  if(!pendingPoints) return;
-  if(pendingPoints.type==='knife'){
-    knifeLinear={p1:pendingPoints.p1,p2:pendingPoints.p2};
-    lockKnife();
-  } else {
-    markData={segXs:pendingPoints.segXs,segYs:pendingPoints.segYs,segValid:pendingPoints.segValid,spline:pendingPoints.spline,regrLine:pendingPoints.regrLine};
-    document.getElementById('legendBox').style.display='flex';
-    setHint('✅ 畫線已套用。左右偏移已更新。','ok');
-    updateMetrics();
-  }
-  pendingPoints=null; hideAiConfirm();
-  if(!liveRunning) draw();
-}
-function discardPending(){ pendingPoints=null; hideAiConfirm(); markClickMode=false; document.getElementById('btnClickMark').className='btn blue'; document.getElementById('btnClickMark').textContent='👆 點擊畫線定位'; }
 
 function lockKnife(){
-  currentStep=2;
-  document.getElementById('phase1').className='phase done';
-  document.getElementById('phase2').className='phase active';
+  document.getElementById('ph1').className='phase done';
+  document.getElementById('ph2').className='phase active';
   document.getElementById('ctrl1').style.display='none';
   document.getElementById('ctrl2').style.display='flex';
   document.getElementById('knifeLocked').classList.add('show');
-  document.getElementById('knifeLocked').querySelector('#knifeLockedText').textContent=`刀口已鎖定（Y≈${Math.round((knifeLinear.p1.y+knifeLinear.p2.y)/2)}px）`;
-  setHint('✅ 刀口鎖定！STEP 2：拍攝鎳板圖片，按「點擊畫線定位」或「AI 精確定位」。','ok');
-  if(liveRunning){ enableMarkButtons(); }
+  document.getElementById('knifeLocked').querySelector('#knifeLockedTxt').textContent=
+    `刀口已鎖定（Y≈${Math.round((knifeLinear.p1.y+knifeLinear.p2.y)/2)}px）`;
+  document.getElementById('legend').style.display='flex';
+  setHint('✅ 刀口鎖定！STEP 2：放入有畫線的鎳板，按「點擊畫線定位」。','ok');
 }
 
-function resetToStep1(){
-  knifePoints=null; knifeLinear=null; markData=null; pendingPoints=null;
-  mode='none'; tempPoint=null; manualBuf=[]; currentStep=1; markClickMode=false;
-  document.getElementById('phase1').className='phase active';
-  document.getElementById('phase2').className='phase';
+function resetKnife(){
+  knifeData=null; knifeLinear=null; markAnchorY=null; markData=null;
+  document.getElementById('ph1').className='phase active';
+  document.getElementById('ph2').className='phase';
+  document.getElementById('ph3').className='phase';
   document.getElementById('ctrl1').style.display='flex';
   document.getElementById('ctrl2').style.display='none';
   document.getElementById('knifeLocked').classList.remove('show');
-  document.getElementById('legendBox').style.display='none';
-  hideAiConfirm(); resetMetrics();
-  if(!liveRunning&&img1){ setupCanvas(img1); draw(); }
-  setHint('STEP 1：拍攝刀口圖片，按「偵測刀口」。','red');
+  document.getElementById('legend').style.display='none';
+  resetMetrics();
+  setHint('STEP 1：放入剪床，按「辨識刀口」。','red');
 }
 
-// ─── 手動標記 ─────────────────────────────────────────────────────────────
-function setMode(m){
-  mode=m; tempPoint=null; manualBuf=[];
-  document.getElementById('btnManualKnife').className='btn'+(m==='knife'?' active-manual':'');
-  if(document.getElementById('btnManualMark')) document.getElementById('btnManualMark').className='btn'+(m==='mark'?' active-manual':'');
-  setHint(m==='knife'?'✏ 點左端 → 右端 各1點定義刀口線':'✏ 點左端 → 右端 各1點定義畫線',m==='knife'?'red':'blue');
-  if(!liveRunning) draw();
+// ══════════════════════════════════════════════════════════════════════════
+// STEP 2：點擊定位畫線，之後每幀自動追蹤
+// ══════════════════════════════════════════════════════════════════════════
+function startMarkClick(){
+  if(!knifeLinear){ setHint('⚠ 請先鎖定刀口。','err'); return; }
+  markClickPending=true;
+  document.getElementById('btnClickMark').className='btn blue click-active';
+  document.getElementById('btnClickMark').textContent='👆 點擊中…';
+  document.getElementById('videoWrap').classList.add('click-mode');
+  setHint('👆 請點擊鎳板上藍色/紫色畫線的位置（點附近即可）。','blue');
 }
 
-function handleManualPoint(x,y){
-  manualBuf.push({x,y}); tempPoint={x,y};
-  if(manualBuf.length===1){ setHint(`第1點(${Math.round(x)},${Math.round(y)})，請點第2點`,mode==='knife'?'red':'blue'); }
-  else if(manualBuf.length>=2){
-    const p1=manualBuf[manualBuf.length-2],p2=manualBuf[manualBuf.length-1];
-    tempPoint=null;
-    if(mode==='knife'){ knifeLinear={p1,p2}; knifePoints=null; lockKnife(); }
-    else {
-      // 手動標記畫線：建立簡單的直線 markData
-      const SEGS=16;
-      const segXs=[],segYs=[],segValid=[];
-      for(let s=0;s<SEGS;s++){
-        const cx=canvasW*(s+0.5)/SEGS;
-        const y=yAtX(p1,p2,cx);
-        segXs.push(cx); segYs.push(y); segValid.push(true);
+// 點擊事件
+overlay.addEventListener('click', handleOverlayClick);
+overlay.addEventListener('touchend', e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0], r=overlay.getBoundingClientRect();
+  handleOverlayXY((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));
+},{passive:false});
+
+function handleOverlayClick(e){
+  const r=overlay.getBoundingClientRect();
+  handleOverlayXY((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));
+}
+
+function handleOverlayXY(x,y){
+  if(markClickPending){
+    markClickPending=false;
+    document.getElementById('btnClickMark').className='btn blue';
+    document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
+    document.getElementById('videoWrap').classList.remove('click-mode');
+    // 用點擊位置做一次精確定位，取得 anchorY
+    const fd=getFramePixels();
+    if(fd){
+      const result=scanMarkLine(fd,y);
+      if(result){
+        markAnchorY=result.bestY;
+        markData=result;
+        document.getElementById('ph2').className='phase done';
+        document.getElementById('ph3').className='phase active';
+        setHint('✅ 畫線已定位，即時追蹤中。調整鎳板位置使偏差趨近 0。','ok');
       }
-      const spline=catmullRomSpline(segXs,segYs,8);
-      const {slope,intercept}=linReg(segXs,segYs);
-      markData={segXs,segYs,segValid,spline,regrLine:{slope,intercept}};
-      document.getElementById('legendBox').style.display='flex';
-      setHint('✅ 畫線已手動標記。','ok');
-      updateMetrics();
     }
-    mode='none'; manualBuf=[];
-    if(!liveRunning) draw();
     return;
   }
-  if(!liveRunning) draw();
+  if(manualMode!=='none') handleManualPoint(x,y);
+}
+
+// ─── 每幀掃描畫線（以 anchorY 為中心）──────────────────────────────────────
+function scanMarkLine(imgData, anchorY){
+  const data=imgData.data;
+  const SEGS=16;
+  const segXs=[],segYs=[],segValid=[];
+
+  // 全域峰值確認
+  const sw=Math.floor(W*0.08);
+  const xC=Math.floor(W/2);
+  const sr2=Math.floor(H*0.2);
+  const yS=Math.max(0,anchorY-sr2), yE=Math.min(H-1,anchorY+sr2);
+  const rowS=new Float32Array(H);
+  for(let y=yS;y<=yE;y++){
+    let s=0;
+    for(let x=xC-sw;x<xC+sw;x++){
+      const i=(y*W+x)*4; const r=data[i],g=data[i+1],b=data[i+2];
+      if(r+g+b>620||r+g+b<20) continue;
+      const adv=b-Math.max(r,g); if(adv>0) s+=adv;
+    }
+    rowS[y]=s/(sw*2);
+  }
+  const sm=gSmooth1D(rowS,5);
+  let bY=Math.round(anchorY),bS=0;
+  for(let y=yS;y<=yE;y++) if(sm[y]>bS){ bS=sm[y]; bY=y; }
+
+  for(let s=0;s<SEGS;s++){
+    const sx=Math.floor(W*s/SEGS), ex=Math.floor(W*(s+1)/SEGS), cx=(sx+ex)/2;
+    const lr=Math.min(30,Math.floor(H*0.05));
+    let tot=0,wY=0,wT=0,lbS=0;
+    for(let y=Math.max(0,bY-lr);y<=Math.min(H-1,bY+lr);y++){
+      let sc=0,cnt=0;
+      for(let x=sx;x<ex;x++){
+        const i=(y*W+x)*4; const r=data[i],g=data[i+1],b=data[i+2];
+        if(r+g+b>620||r+g+b<20) continue;
+        const adv=b-Math.max(r,g); if(adv>0){sc+=adv;cnt++;}
+      }
+      const avg=cnt?sc/cnt:0;
+      if(avg>lbS) lbS=avg;
+      tot+=sc; wY+=y*avg; wT+=avg;
+    }
+    const subY=wT>0?wY/wT:bY;
+    const sw2=ex-sx;
+    segXs.push(cx); segYs.push(subY);
+    segValid.push(tot>sw2*8&&lbS>5);
+  }
+
+  // 線性迴歸（有效段）
+  const vXs=segXs.filter((_,i)=>segValid[i]);
+  const vYs=segYs.filter((_,i)=>segValid[i]);
+  let regrLine=null;
+  if(vXs.length>=2){ const r=linReg(vXs,vYs); regrLine=r; }
+
+  // 填補無效段
+  const fYs=[...segYs];
+  const vIdx=segValid.map((v,i)=>v?i:-1).filter(i=>i>=0);
+  if(vIdx.length>=2){
+    for(let i=0;i<vIdx.length-1;i++){
+      const a=vIdx[i],b=vIdx[i+1];
+      for(let s=a+1;s<b;s++){const t=(s-a)/(b-a);fYs[s]=segYs[a]*(1-t)+segYs[b]*t;}
+    }
+    if(regrLine){
+      for(let s=0;s<vIdx[0];s++) fYs[s]=regrLine.slope*segXs[s]+regrLine.intercept;
+      for(let s=vIdx[vIdx.length-1]+1;s<SEGS;s++) fYs[s]=regrLine.slope*segXs[s]+regrLine.intercept;
+    }
+  }
+
+  const spline=catmullRom(segXs,fYs,8);
+  const vc=segValid.filter(Boolean).length;
+  return{bestY:bY,segXs,segYs:fYs,segValid,spline,regrLine,validCount:vc,confidence:Math.min(100,Math.round(Math.min(bS/30,1)*50+(vc/SEGS)*50))};
 }
 
 // ─── 繪製 ─────────────────────────────────────────────────────────────────
-function draw(){
-  const curImg=currentStep===1?img1:(img2||img1);
-  if(!curImg) return;
-  ctx.clearRect(0,0,canvasW,canvasH);
-  ctx.drawImage(curImg,0,0,canvasW,canvasH);
-  // 刀口線
-  if(knifePoints) drawCurveKnife(ctx);
-  else if(knifeLinear) drawLineOnCtx(ctx,knifeLinear.p1,knifeLinear.p2,'#ff5555','刀口基準');
-  // 畫線
-  if(markData) drawMarkOnCtx(ctx);
-  // 手動暫時點
-  if(tempPoint){ ctx.beginPath(); ctx.arc(tempPoint.x,tempPoint.y,7,0,Math.PI*2); ctx.fillStyle=mode==='knife'?'#ff5555':'#55aaff'; ctx.globalAlpha=0.85; ctx.fill(); ctx.globalAlpha=1; }
-  // 量測箭頭
-  if(knifeLinear&&markData) drawMeasureArrows(ctx);
-}
-
-function drawWithPending(){
-  draw();
-  if(!pendingPoints) return;
-  ctx.save(); ctx.globalAlpha=0.55;
-  if(pendingPoints.type==='knife'){
-    drawLineOnCtx(ctx,pendingPoints.p1,pendingPoints.p2,'#ff8888','刀口（預覽）');
-  } else if(pendingPoints.spline){
-    drawSplineMark(ctx,pendingPoints.segXs,pendingPoints.segYs,pendingPoints.segValid,pendingPoints.spline,'（預覽）');
-  }
-  ctx.restore();
-}
-
-function drawCurveKnife(c){
-  if(!knifePoints) return;
-  const {xs,ys}=knifePoints;
-  c.save(); c.beginPath();
+function drawKnifeCurve(){
+  if(!knifeData) return;
+  const {xs,ys}=knifeData;
+  octx.save(); octx.beginPath();
   const s0=(ys[1]-ys[0])/(xs[1]-xs[0]||1);
-  c.moveTo(0,ys[0]-s0*xs[0]);
-  for(let i=0;i<xs.length;i++) c.lineTo(xs[i],ys[i]);
+  octx.moveTo(0,ys[0]-s0*xs[0]);
+  for(let i=0;i<xs.length;i++) octx.lineTo(xs[i],ys[i]);
   const sl=(ys[xs.length-1]-ys[xs.length-2])/(xs[xs.length-1]-xs[xs.length-2]||1);
-  c.lineTo(canvasW,ys[xs.length-1]+sl*(canvasW-xs[xs.length-1]));
-  c.strokeStyle='#ff5555'; c.lineWidth=2; c.setLineDash([7,4]); c.stroke(); c.setLineDash([]);
-  xs.forEach((x,i)=>{ c.beginPath(); c.arc(x,ys[i],4,0,Math.PI*2); c.fillStyle='#ff8888'; c.globalAlpha=0.7; c.fill(); c.globalAlpha=1; });
-  c.fillStyle='#ff5555'; c.font='bold 12px Courier New'; c.shadowColor='#000'; c.shadowBlur=3;
-  c.fillText('刀口基準',12,ys[0]-7); c.shadowBlur=0; c.restore();
+  octx.lineTo(W,ys[xs.length-1]+sl*(W-xs[xs.length-1]));
+  octx.strokeStyle='#ff5555'; octx.lineWidth=2; octx.setLineDash([7,4]); octx.stroke(); octx.setLineDash([]);
+  octx.fillStyle='#ff5555'; octx.font='bold 12px Courier New';
+  octx.shadowColor='#000'; octx.shadowBlur=3;
+  octx.fillText('刀口基準',12,ys[0]-7); octx.shadowBlur=0; octx.restore();
 }
 
-function drawMarkOnCtx(c){
-  if(!markData) return;
-  drawSplineMark(c,markData.segXs,markData.segYs,markData.segValid,markData.spline,'');
+function drawLine(p1,p2,color,label){
+  const e=extLine(p1,p2);
+  octx.save(); octx.beginPath(); octx.moveTo(e.x1,e.y1); octx.lineTo(e.x2,e.y2);
+  octx.strokeStyle=color; octx.lineWidth=2; octx.setLineDash([7,4]); octx.stroke(); octx.setLineDash([]);
+  octx.fillStyle=color; octx.font='bold 12px Courier New';
+  octx.shadowColor='#000'; octx.shadowBlur=3;
+  octx.fillText(label,12,(p1.y+p2.y)/2-7); octx.shadowBlur=0; octx.restore();
 }
 
-function drawSplineMark(c,segXs,segYs,segValid,spline,suffix){
-  if(!spline||spline.length===0) return;
-  const SEGS=segValid.length;
-  const ptsPerSeg=Math.ceil(spline.length/SEGS);
-  c.save();
-  // 暗色底線（全段延伸線）
-  c.beginPath();
-  spline.forEach((p,i)=>{ if(i===0) c.moveTo(p.x,p.y); else c.lineTo(p.x,p.y); });
-  c.strokeStyle='#1a3a5a'; c.lineWidth=1.5; c.setLineDash([4,4]); c.stroke(); c.setLineDash([]);
+function drawMarkLines(){
+  if(!markData||!markData.spline) return;
+  const {segXs,segYs,segValid,spline}=markData;
+  const SEGS=segValid.length, pps=Math.ceil(spline.length/SEGS);
+  octx.save();
+  // 暗色底線（全段）
+  octx.beginPath();
+  spline.forEach((p,i)=>{ if(i===0) octx.moveTo(p.x,p.y); else octx.lineTo(p.x,p.y); });
+  octx.strokeStyle='#1a3a5a'; octx.lineWidth=1.5; octx.setLineDash([4,4]); octx.stroke(); octx.setLineDash([]);
   // 亮色有效段
   let inV=false;
   spline.forEach((p,i)=>{
-    const si=Math.min(SEGS-1,Math.floor(i/ptsPerSeg));
-    const isV=segValid[si];
-    if(i===0){ c.beginPath(); c.moveTo(p.x,p.y); inV=isV; return; }
+    const si=Math.min(SEGS-1,Math.floor(i/pps)), isV=segValid[si];
+    if(i===0){ octx.beginPath(); octx.moveTo(p.x,p.y); inV=isV; return; }
     if(isV!==inV){
-      if(inV){ c.strokeStyle='#55aaff'; c.lineWidth=2.5; c.setLineDash([]); c.stroke(); }
-      c.beginPath(); c.moveTo(p.x,p.y); inV=isV;
+      if(inV){ octx.strokeStyle='#55aaff'; octx.lineWidth=2.5; octx.setLineDash([]); octx.stroke(); }
+      octx.beginPath(); octx.moveTo(p.x,p.y); inV=isV;
     }
-    c.lineTo(p.x,p.y);
+    octx.lineTo(p.x,p.y);
   });
-  if(inV){ c.strokeStyle='#55aaff'; c.lineWidth=2.5; c.setLineDash([]); c.stroke(); }
-  // 控制點
-  segXs.forEach((x,i)=>{ c.beginPath(); c.arc(x,segYs[i],3,0,Math.PI*2); c.fillStyle=segValid[i]?'#88ccff':'#335577'; c.globalAlpha=segValid[i]?0.8:0.3; c.fill(); c.globalAlpha=1; });
+  if(inV){ octx.strokeStyle='#55aaff'; octx.lineWidth=2.5; octx.setLineDash([]); octx.stroke(); }
   // 標籤
-  const firstV=segValid.findIndex(Boolean);
-  if(firstV>=0){
-    c.fillStyle='#55aaff'; c.font='bold 12px Courier New'; c.shadowColor='#000'; c.shadowBlur=3;
-    c.fillText('畫線'+suffix,Math.floor(canvasW*firstV/SEGS)+4,segYs[firstV]-10);
-    c.shadowBlur=0;
+  const fv=segValid.findIndex(Boolean);
+  if(fv>=0){
+    octx.fillStyle='#55aaff'; octx.font='bold 12px Courier New';
+    octx.shadowColor='#000'; octx.shadowBlur=3;
+    octx.fillText('畫線',Math.floor(W*fv/SEGS)+4,segYs[fv]-10);
+    octx.shadowBlur=0;
   }
-  c.restore();
+  octx.restore();
 }
 
-function drawLineOnCtx(c,p1,p2,color,label){
-  const e=extendLine(p1,p2);
-  c.save(); c.beginPath(); c.moveTo(e.x1,e.y1); c.lineTo(e.x2,e.y2);
-  c.strokeStyle=color; c.lineWidth=2; c.setLineDash([7,4]); c.stroke(); c.setLineDash([]);
-  [p1,p2].forEach(p=>{ c.beginPath(); c.arc(p.x,p.y,5,0,Math.PI*2); c.fillStyle=color; c.globalAlpha=0.8; c.fill(); c.globalAlpha=1; });
-  c.fillStyle=color; c.font='bold 12px Courier New'; c.shadowColor='#000'; c.shadowBlur=3;
-  c.fillText(label,12,(p1.y+p2.y)/2-7); c.shadowBlur=0; c.restore();
+function drawManualTemp(){
+  if(manualBuf.length===0) return;
+  const p=manualBuf[manualBuf.length-1];
+  octx.save(); octx.beginPath(); octx.arc(p.x,p.y,8,0,Math.PI*2);
+  octx.strokeStyle=manualMode==='knife'?'#ff5555':'#55aaff'; octx.lineWidth=2; octx.stroke();
+  octx.restore();
 }
 
-function drawMeasureArrows(c){
-  if(!knifeLinear||!markData) return;
-  const lx=canvasW*0.2,rx=canvasW*0.8;
-  const ky_l=yAtX(knifeLinear.p1,knifeLinear.p2,lx), ky_r=yAtX(knifeLinear.p1,knifeLinear.p2,rx);
-  // 從樣條曲線取對應 Y
-  const my_l=splineYatX(markData.spline,lx), my_r=splineYatX(markData.spline,rx);
-  drawArrow(c,lx,ky_l,lx,my_l,'#ffd060'); drawArrow(c,rx,ky_r,rx,my_r,'#ffd060');
-  const ppm=getRealWidth()/canvasW;
-  c.save(); c.fillStyle='#ffd060'; c.font='bold 12px Courier New'; c.shadowColor='#000'; c.shadowBlur=3;
-  c.fillText(((my_l-ky_l)*ppm).toFixed(2)+'mm',lx+8,(ky_l+my_l)/2+4);
-  c.fillText(((my_r-ky_r)*ppm).toFixed(2)+'mm',rx+8,(ky_r+my_r)/2+4);
-  c.shadowBlur=0; c.restore();
-}
-
-// 從樣條曲線點陣列中，用最近 X 插值取 Y
-function splineYatX(spline,targetX){
-  if(!spline||spline.length===0) return 0;
-  let closest=spline[0];
-  let minDx=Math.abs(spline[0].x-targetX);
-  for(const p of spline){ const dx=Math.abs(p.x-targetX); if(dx<minDx){ minDx=dx; closest=p; } }
-  return closest.y;
-}
-
-function drawArrow(c,x1,y1,x2,y2,color){
+function drawArrowOctx(x1,y1,x2,y2,color){
   if(Math.abs(y2-y1)<2) return;
-  c.save(); c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2);
-  c.strokeStyle=color; c.lineWidth=1.8; c.stroke();
+  octx.save(); octx.beginPath(); octx.moveTo(x1,y1); octx.lineTo(x2,y2);
+  octx.strokeStyle=color; octx.lineWidth=1.8; octx.stroke();
   const a=Math.atan2(y2-y1,0),s=7;
-  c.beginPath(); c.moveTo(x2,y2); c.lineTo(x2-s*Math.cos(a-0.4),y2-s*Math.sin(a-0.4)); c.lineTo(x2-s*Math.cos(a+0.4),y2-s*Math.sin(a+0.4));
-  c.closePath(); c.fillStyle=color; c.fill(); c.restore();
+  octx.beginPath(); octx.moveTo(x2,y2);
+  octx.lineTo(x2-s*Math.cos(a-0.4),y2-s*Math.sin(a-0.4));
+  octx.lineTo(x2-s*Math.cos(a+0.4),y2-s*Math.sin(a+0.4));
+  octx.closePath(); octx.fillStyle=color; octx.fill(); octx.restore();
 }
 
-// ─── 數值更新 ─────────────────────────────────────────────────────────────
-function updateMetrics(){
-  if(!knifeLinear||!markData||!markData.spline) return;
-  const lx=canvasW*0.2,rx=canvasW*0.8;
-  const ky_l=yAtX(knifeLinear.p1,knifeLinear.p2,lx), ky_r=yAtX(knifeLinear.p1,knifeLinear.p2,rx);
-  const my_l=splineYatX(markData.spline,lx), my_r=splineYatX(markData.spline,rx);
-  const ppm=getRealWidth()/canvasW;
-  const dl=(my_l-ky_l)*ppm, dr=(my_r-ky_r)*ppm, diff=Math.abs(dl-dr);
+// ─── 即時量測 ─────────────────────────────────────────────────────────────
+function calcAndShowMetrics(){
+  const lx=W*0.2, rx=W*0.8;
+  const kyL=yAtX(knifeLinear.p1,knifeLinear.p2,lx);
+  const kyR=yAtX(knifeLinear.p1,knifeLinear.p2,rx);
+  const myL=spYatX(markData.spline,lx);
+  const myR=spYatX(markData.spline,rx);
+
+  // 畫箭頭
+  drawArrowOctx(lx,kyL,lx,myL,'#ffd060');
+  drawArrowOctx(rx,kyR,rx,myR,'#ffd060');
+  const ppm=getRW()/W;
+  octx.save(); octx.fillStyle='#ffd060'; octx.font='bold 12px Courier New';
+  octx.shadowColor='#000'; octx.shadowBlur=3;
+  octx.fillText(((myL-kyL)*ppm).toFixed(2)+'mm',lx+8,(kyL+myL)/2+4);
+  octx.fillText(((myR-kyR)*ppm).toFixed(2)+'mm',rx+8,(kyR+myR)/2+4);
+  octx.shadowBlur=0; octx.restore();
+
+  const dl=(myL-kyL)*ppm, dr=(myR-kyR)*ppm, diff=Math.abs(dl-dr);
   const fmt=v=>(v>=0?'+':'')+v.toFixed(2);
-  document.getElementById('valLeft').textContent=fmt(dl)+' mm';
-  document.getElementById('valRight').textContent=fmt(dr)+' mm';
-  document.getElementById('valParallel').textContent=diff.toFixed(2)+' mm';
-  document.getElementById('subLeft').textContent=dl>=0?'畫線在刀口下方':'畫線在刀口上方';
-  document.getElementById('subRight').textContent=dr>=0?'畫線在刀口下方':'畫線在刀口上方';
+  document.getElementById('vL').textContent=fmt(dl)+' mm';
+  document.getElementById('vR').textContent=fmt(dr)+' mm';
+  document.getElementById('vP').textContent=diff.toFixed(2)+' mm';
+  document.getElementById('sL').textContent=dl>=0?'畫線在刀口下方':'畫線在刀口上方';
+  document.getElementById('sR').textContent=dr>=0?'畫線在刀口下方':'畫線在刀口上方';
   const T=0.5;
-  document.getElementById('valLeft').className='metric-value '+cls(Math.abs(dl),T);
-  document.getElementById('valRight').className='metric-value '+cls(Math.abs(dr),T);
-  document.getElementById('valParallel').className='metric-value '+cls(diff,T*0.5);
-  const maxOff=Math.max(Math.abs(dl),Math.abs(dr));
-  const dot=document.getElementById('verdictDot'),txt=document.getElementById('verdictText');
-  if(maxOff<T&&diff<T*0.5){dot.className='verdict-dot good';txt.textContent=`✅ 對位良好 — 最大偏移 ${maxOff.toFixed(2)} mm，平行差 ${diff.toFixed(2)} mm`;}
-  else if(maxOff<T*2){dot.className='verdict-dot warn';txt.textContent=`⚠ 需微調 — 偏移 ${maxOff.toFixed(2)} mm，平行差 ${diff.toFixed(2)} mm`;}
-  else{dot.className='verdict-dot bad';txt.textContent=`✗ 偏移過大 — ${maxOff.toFixed(2)} mm，請重新對位`;}
-  if(!liveRunning) draw();
+  document.getElementById('vL').className='mv '+cls(Math.abs(dl),T);
+  document.getElementById('vR').className='mv '+cls(Math.abs(dr),T);
+  document.getElementById('vP').className='mv '+cls(diff,T*0.5);
+  const maxO=Math.max(Math.abs(dl),Math.abs(dr));
+  const dot=document.getElementById('vdot'),txt=document.getElementById('vtxt');
+  if(maxO<T&&diff<T*0.5){dot.className='vdot good';txt.textContent=`✅ 對位良好 — 偏移 ${maxO.toFixed(2)} mm，平行差 ${diff.toFixed(2)} mm`;}
+  else if(maxO<T*2){dot.className='vdot warn';txt.textContent=`⚠ 需微調 — 偏移 ${maxO.toFixed(2)} mm，平行差 ${diff.toFixed(2)} mm`;}
+  else{dot.className='vdot bad';txt.textContent=`✗ 偏移過大 — ${maxO.toFixed(2)} mm，請重新對位`;}
 }
 
 function resetMetrics(){
-  ['valLeft','valRight','valParallel'].forEach(id=>{document.getElementById(id).textContent='—';document.getElementById(id).className='metric-value';});
-  document.getElementById('subLeft').textContent='畫線 vs 刀口';
-  document.getElementById('subRight').textContent='畫線 vs 刀口';
-  document.getElementById('verdictDot').className='verdict-dot';
-  document.getElementById('verdictText').textContent='完成兩個步驟後顯示量測結果';
+  ['vL','vR','vP'].forEach(id=>{document.getElementById(id).textContent='—';document.getElementById(id).className='mv';});
+  document.getElementById('sL').textContent='畫線 vs 刀口';
+  document.getElementById('sR').textContent='畫線 vs 刀口';
+  document.getElementById('vdot').className='vdot';
+  document.getElementById('vtxt').textContent='完成兩個步驟後即時顯示量測結果';
 }
 
-// ─── 像素演算法 ───────────────────────────────────────────────────────────
-function gaussBlur2D(gray,W,H,r){
+// ─── 手動標記 ─────────────────────────────────────────────────────────────
+function startManual(type){
+  manualMode=type; manualBuf=[];
+  document.getElementById('videoWrap').classList.add('click-mode');
+  setHint(type==='knife'?'✏ 點左端 → 右端 各1點定義刀口線':'✏ 點左端 → 右端 各1點定義畫線',type==='knife'?'red':'blue');
+}
+
+function handleManualPoint(x,y){
+  manualBuf.push({x,y});
+  if(manualBuf.length>=2){
+    const p1=manualBuf[manualBuf.length-2], p2=manualBuf[manualBuf.length-1];
+    if(manualMode==='knife'){
+      knifeLinear={p1,p2}; knifeData=null; lockKnife();
+    } else {
+      markAnchorY=(p1.y+p2.y)/2;
+      // 建立直線 markData
+      const SEGS=16, sXs=[],sYs=[],sV=[];
+      for(let s=0;s<SEGS;s++){
+        const cx=W*(s+0.5)/SEGS;
+        sXs.push(cx); sYs.push(yAtX(p1,p2,cx)); sV.push(true);
+      }
+      const sp=catmullRom(sXs,sYs,8);
+      const rr=linReg(sXs,sYs);
+      markData={segXs:sXs,segYs:sYs,segValid:sV,spline:sp,regrLine:rr,bestY:markAnchorY,validCount:SEGS,confidence:100};
+      document.getElementById('ph2').className='phase done';
+      document.getElementById('ph3').className='phase active';
+      setHint('✅ 畫線已手動標記，即時追蹤中。','ok');
+    }
+    manualMode='none'; manualBuf=[];
+    document.getElementById('videoWrap').classList.remove('click-mode');
+  }
+}
+
+function resetMark(){
+  markAnchorY=null; markData=null;
+  document.getElementById('ph2').className='phase active';
+  document.getElementById('ph3').className='phase';
+  resetMetrics();
+  setHint('STEP 2：按「點擊畫線定位」重新定位。','blue');
+}
+
+// ─── 工具函數 ─────────────────────────────────────────────────────────────
+function gBlur2D(gray,W,H,r){
   const k=makeGK(r),tmp=new Float32Array(W*H),out=new Float32Array(W*H);
-  for(let y=0;y<H;y++) for(let x=0;x<W;x++){ let s=0,w=0; for(let d=-r;d<=r;d++){const xx=Math.min(W-1,Math.max(0,x+d));const wt=k[d+r];s+=gray[y*W+xx]*wt;w+=wt;} tmp[y*W+x]=s/w; }
-  for(let y=0;y<H;y++) for(let x=0;x<W;x++){ let s=0,w=0; for(let d=-r;d<=r;d++){const yy=Math.min(H-1,Math.max(0,y+d));const wt=k[d+r];s+=tmp[yy*W+x]*wt;w+=wt;} out[y*W+x]=s/w; }
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){let s=0,w=0;for(let d=-r;d<=r;d++){const xx=Math.min(W-1,Math.max(0,x+d));const wt=k[d+r];s+=gray[y*W+xx]*wt;w+=wt;}tmp[y*W+x]=s/w;}
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){let s=0,w=0;for(let d=-r;d<=r;d++){const yy=Math.min(H-1,Math.max(0,y+d));const wt=k[d+r];s+=tmp[yy*W+x]*wt;w+=wt;}out[y*W+x]=s/w;}
   return out;
 }
-function makeGK(r){ const k=[]; for(let i=-r;i<=r;i++) k.push(Math.exp(-i*i/(2*r*r/4))); return k; }
-function otsuThreshold(data){ const h=new Array(256).fill(0); for(let i=0;i<data.length;i++) h[Math.min(255,Math.floor(data[i]))]++; const tot=data.length; let sa=0; for(let i=0;i<256;i++) sa+=i*h[i]; let sb=0,wb=0,bv=0,bt=0; for(let t=0;t<256;t++){wb+=h[t];if(!wb)continue;const wf=tot-wb;if(!wf)break;sb+=t*h[t];const mb=sb/wb,mf=(sa-sb)/wf,v=wb*wf*(mb-mf)**2;if(v>bv){bv=v;bt=t;}} return bt; }
-function gaussSmooth1D(arr,r){ const out=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){let s=0,w=0;for(let k=-r;k<=r;k++){const idx=Math.min(arr.length-1,Math.max(0,i+k));const wt=Math.exp(-k*k/(2*r*r));s+=arr[idx]*wt;w+=wt;}out[i]=s/w;} return out; }
-function findEdgeInColumn(blurred,xS,xE,aY,W,H){ const r=Math.min(80,Math.floor(H*0.15)); const yS=Math.max(2,aY-r),yE=Math.min(H-2,aY+r); let bY=aY,bG=0; for(let y=yS;y<yE;y++){let a=0,b=0,c=0;for(let x=xS;x<xE;x++){a+=blurred[Math.max(0,y-3)*W+x];b+=blurred[Math.min(H-1,y+3)*W+x];c++;}const g=(a-b)/c;if(g>bG){bG=g;bY=y;}} return bY; }
-function catmullRomSpline(xs,ys,steps){ const pts=[],n=xs.length; for(let i=0;i<n-1;i++){const p0=i>0?{x:xs[i-1],y:ys[i-1]}:{x:xs[i]-(xs[i+1]-xs[i]),y:ys[i]-(ys[i+1]-ys[i])};const p1={x:xs[i],y:ys[i]};const p2={x:xs[i+1],y:ys[i+1]};const p3=i<n-2?{x:xs[i+2],y:ys[i+2]}:{x:xs[i+1]+(xs[i+1]-xs[i]),y:ys[i+1]+(ys[i+1]-ys[i])};for(let t=0;t<=steps;t++){const tt=t/steps,t2=tt*tt,t3=t2*tt;pts.push({x:0.5*((2*p1.x)+(-p0.x+p2.x)*tt+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),y:0.5*((2*p1.y)+(-p0.y+p2.y)*tt+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3)});}} return pts; }
-function linReg(xs,ys){ const n=xs.length,mx=xs.reduce((a,b)=>a+b)/n,my=ys.reduce((a,b)=>a+b)/n; let num=0,den=0; for(let i=0;i<n;i++){num+=(xs[i]-mx)*(ys[i]-my);den+=(xs[i]-mx)**2;} const slope=den?num/den:0; return{slope,intercept:my-slope*mx}; }
-
-// ─── Claude API ───────────────────────────────────────────────────────────
-async function callClaude(apiKey,b64,mime,prompt){
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:mime,data:b64}},{type:'text',text:prompt}]}]})});
-  if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${resp.status}`);}
-  const data=await resp.json(); const raw=data.content.map(c=>c.text||'').join('');
-  return JSON.parse(raw.replace(/```json|```/g,'').trim());
+function makeGK(r){const k=[];for(let i=-r;i<=r;i++)k.push(Math.exp(-i*i/(2*r*r/4)));return k;}
+function otsu(data){const h=new Array(256).fill(0);for(let i=0;i<data.length;i++)h[Math.min(255,Math.floor(data[i]))]++;const tot=data.length;let sa=0;for(let i=0;i<256;i++)sa+=i*h[i];let sb=0,wb=0,bv=0,bt=0;for(let t=0;t<256;t++){wb+=h[t];if(!wb)continue;const wf=tot-wb;if(!wf)break;sb+=t*h[t];const mb=sb/wb,mf=(sa-sb)/wf,v=wb*wf*(mb-mf)**2;if(v>bv){bv=v;bt=t;}}return bt;}
+function gSmooth1D(arr,r){const out=new Float32Array(arr.length);for(let i=0;i<arr.length;i++){let s=0,w=0;for(let k=-r;k<=r;k++){const idx=Math.min(arr.length-1,Math.max(0,i+k));const wt=Math.exp(-k*k/(2*r*r));s+=arr[idx]*wt;w+=wt;}out[i]=s/w;}return out;}
+function findEdge(blurred,xS,xE,aY,W,H){const r=Math.min(80,Math.floor(H*0.15));const yS=Math.max(2,aY-r),yE=Math.min(H-2,aY+r);let bY=aY,bG=0;for(let y=yS;y<yE;y++){let a=0,b=0,c=0;for(let x=xS;x<xE;x++){a+=blurred[Math.max(0,y-3)*W+x];b+=blurred[Math.min(H-1,y+3)*W+x];c++;}const g=(a-b)/c;if(g>bG){bG=g;bY=y;}}return bY;}
+function catmullRom(xs,ys,steps){const pts=[],n=xs.length;for(let i=0;i<n-1;i++){const p0=i>0?{x:xs[i-1],y:ys[i-1]}:{x:xs[i]-(xs[i+1]-xs[i]),y:ys[i]-(ys[i+1]-ys[i])};const p1={x:xs[i],y:ys[i]};const p2={x:xs[i+1],y:ys[i+1]};const p3=i<n-2?{x:xs[i+2],y:ys[i+2]}:{x:xs[i+1]+(xs[i+1]-xs[i]),y:ys[i+1]+(ys[i+1]-ys[i])};for(let t=0;t<=steps;t++){const tt=t/steps,t2=tt*tt,t3=t2*tt;pts.push({x:0.5*((2*p1.x)+(-p0.x+p2.x)*tt+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),y:0.5*((2*p1.y)+(-p0.y+p2.y)*tt+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3)});}}return pts;}
+function linReg(xs,ys){const n=xs.length,mx=xs.reduce((a,b)=>a+b)/n,my=ys.reduce((a,b)=>a+b)/n;let num=0,den=0;for(let i=0;i<n;i++){num+=(xs[i]-mx)*(ys[i]-my);den+=(xs[i]-mx)**2;}const slope=den?num/den:0;return{slope,intercept:my-slope*mx};}
+function spYatX(spline,tx){if(!spline||!spline.length)return 0;let c=spline[0],md=Math.abs(spline[0].x-tx);for(const p of spline){const d=Math.abs(p.x-tx);if(d<md){md=d;c=p;}}return c.y;}
+function yAtX(p1,p2,x){if(Math.abs(p2.x-p1.x)<0.5)return p1.y;return p1.y+(p2.y-p1.y)*(x-p1.x)/(p2.x-p1.x);}
+function extLine(p1,p2){if(Math.abs(p2.x-p1.x)<0.5)return{x1:p1.x,y1:0,x2:p1.x,y2:H};const m=(p2.y-p1.y)/(p2.x-p1.x),b=p1.y-m*p1.x;return{x1:0,y1:b,x2:W,y2:m*W+b};}
+function cls(v,t){return v<t*0.5?'good':v<t?'warn':'bad';}
+function getRW(){return parseFloat(document.getElementById('realWidth').value)||200;}
+function setLiveStatus(on,msg){
+  document.getElementById('liveDot').className='live-dot'+(on?'':' off');
+  document.getElementById('liveTxt').className='live-txt'+(on?'':' off');
+  document.getElementById('liveTxt').textContent=msg;
+  if(!on) document.getElementById('liveFps').textContent='';
 }
-function getApiKey(){ const k=document.getElementById('apiKey').value.trim(); if(!k||!k.startsWith('sk-ant-')){ setHint('⚠ 請先填入有效的 API Key','err'); return null; } return k; }
-function getRealWidth(){ return parseFloat(document.getElementById('realWidth').value)||200; }
-function showAiStatus(msg){ document.getElementById('aiStatusText').textContent=msg; document.getElementById('aiStatus').classList.add('show'); }
-function hideAiStatus(){ document.getElementById('aiStatus').classList.remove('show'); }
-function showAiConfirm(html){ document.getElementById('aiConfirmText').innerHTML=html; document.getElementById('aiConfirm').classList.add('show'); }
-function hideAiConfirm(){ document.getElementById('aiConfirm').classList.remove('show'); }
-function setHint(msg,type=''){ const el=document.getElementById('modeHint'); el.textContent=msg; el.className='mode-hint'+(type?' '+type:''); }
-function yAtX(p1,p2,x){ if(Math.abs(p2.x-p1.x)<0.5)return p1.y; return p1.y+(p2.y-p1.y)*(x-p1.x)/(p2.x-p1.x); }
-function extendLine(p1,p2){ if(Math.abs(p2.x-p1.x)<0.5)return{x1:p1.x,y1:0,x2:p1.x,y2:canvasH}; const m=(p2.y-p1.y)/(p2.x-p1.x),b=p1.y-m*p1.x; return{x1:0,y1:b,x2:canvasW,y2:m*canvasW+b}; }
-function cls(v,t){ return v<t*0.5?'good':v<t?'warn':'bad'; }
+function setHint(msg,type=''){const el=document.getElementById('hint');el.textContent=msg;el.className='hint'+(type?' '+type:'');}
 </script>
 </body>
 </html>
