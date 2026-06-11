@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.5.5
+ 目前版本：v3.5.6
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.5.5 — 加入 Claude AI 輔助畫線定位</p>
+<p class="subtitle">v3.5.6 — 修正亮度門檻，藍線偵測改為低亮度容許</p>
 
 <div class="workspace">
 
@@ -144,6 +144,13 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
     <canvas id="overlayCanvas" style="display:none;"></canvas>
   </div>
 
+  <div style="display:flex;align-items:center;gap:8px;background:#0d1018;border:1px solid #1e2535;border-radius:5px;padding:6px 12px;">
+    <span style="font-size:0.68rem;color:#556677;white-space:nowrap;">🔍 變焦</span>
+    <input type="range" id="zoomSlider" min="1" max="4" step="0.1" value="1"
+      style="flex:1;accent-color:#4a7ab5;"
+      oninput="applyZoom(this.value)">
+    <span id="zoomVal" style="font-size:0.68rem;color:#8ab4e8;min-width:28px;">1.0×</span>
+  </div>
   <div class="live-status">
     <div class="live-dot off" id="liveDot"></div>
     <span class="live-txt off" id="liveTxt">攝影機未開啟</span>
@@ -269,6 +276,21 @@ function stopCam(){
 
 
 // ─── 點擊畫線定位 ─────────────────────────────────────────────────────────
+
+
+// ─── 數位變焦 ─────────────────────────────────────────────────────────────
+function applyZoom(val){
+  const z=parseFloat(val);
+  document.getElementById('zoomVal').textContent=z.toFixed(1)+'×';
+  // 用 CSS transform 縮放影像，但保持 overlay 對齊
+  const wrap=document.getElementById('videoWrap');
+  video.style.transform=`scale(${z})`;
+  video.style.transformOrigin='center top';
+  overlay.style.transform=`scale(${z})`;
+  overlay.style.transformOrigin='center top';
+  // 調整 wrap 高度
+  wrap.style.overflow= z>1 ? 'hidden' : 'hidden';
+}
 
 // ─── API Key ──────────────────────────────────────────────────────────────
 function saveApiKey(){
@@ -707,7 +729,7 @@ function detectMark(fd, anchorY){
       for(let x=sx;x<ex;x++){
         const i=(y*W+x)*4;
         const r=data[i],g=data[i+1],b=data[i+2],br=r+g+b;
-        if(br<100||br>580) continue;
+        if(br<30||br>580) continue;
         sumRB+=(r-b); cnt++;
       }
       const rbScore=cnt>0?(refRB-sumRB/cnt):0;
