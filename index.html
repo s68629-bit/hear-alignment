@@ -13,15 +13,16 @@
  【版次歷史】
  ─────────────────────────────────────────────────────────────────────────
  v1.0  動態即時版初版。兩階段：先鎖定刀口，再追蹤畫線。
- v2.0  完全自動雙線同步偵測。
-        - 斜角俯視拍攝，畫面下半部偵測刀口，上半部偵測畫線
-        - 每幀同時偵測兩條線，不需要任何手動步驟
-        - 時間軸平滑（temporal smoothing）消除幀間跳動
-        - 刀口：Otsu + 水平投影，搜尋下半部
-        - 畫線：藍色像素優勢掃描，搜尋上半部
-        - 即時顯示左右偏移、平行度、貼合度判定
+ v2.0  完全自動雙線同步偵測。斜角俯視，上半部找畫線，下半部找刀口。
+        加入時間軸平滑消除幀間跳動。
+ v3.0  智慧刀口追蹤 + 遮蓋偵測：
+        - 刀口每幀動態偵測（8段），有效段顯示亮紅色
+        - 鎳板推入遮蓋刀口時，被遮住的段自動切換暗紅色延伸線
+        - 未遮住的段繼續動態更新，補償手持抖動
+        - 手動點擊畫線位置後開始即時追蹤藍色畫線
+        - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v2.0
+ 目前版本：v3.0
  最後更新：2025-06
 =============================================================================
 -->
@@ -40,9 +41,10 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 .video-wrap { position: relative; width: 100%; background: #181c24; border: 1px solid #2a2e3a; border-radius: 6px; overflow: hidden; min-height: 200px; }
 #liveVideo { display: block; width: 100%; height: auto; }
 #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+#overlayCanvas.clickable { pointer-events: auto; cursor: crosshair; }
 .video-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 240px; color: #334455; font-size: 0.82rem; gap: 8px; }
 
-/* 即時狀態列 */
+/* 狀態列 */
 .live-status { display: flex; align-items: center; gap: 8px; background: #0a1a0a; border: 1px solid #2a5a2a; border-radius: 5px; padding: 7px 12px; font-size: 0.72rem; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #5dc87a; box-shadow: 0 0 6px #5dc87a; animation: pulse 1s infinite; flex-shrink: 0; }
 .live-dot.off { background: #445566; box-shadow: none; animation: none; }
@@ -51,11 +53,12 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 .live-txt.off { color: #445566; }
 .live-fps { font-size: 0.65rem; color: #3a6a3a; }
 
-/* 偵測狀態指示 */
+/* 偵測狀態 */
 .detect-row { display: flex; gap: 8px; }
-.detect-chip { flex: 1; padding: 6px 10px; border-radius: 4px; font-size: 0.68rem; text-align: center; background: #0d1018; border: 1px solid #1e2535; color: #334455; }
-.detect-chip.found { background: #0e1e14; border-color: #2a5a3a; color: #5dc87a; }
-.detect-chip.lost  { background: #1a0e0e; border-color: #5a2a2a; color: #cc6666; }
+.dc { flex: 1; padding: 6px 8px; border-radius: 4px; font-size: 0.67rem; text-align: center; background: #0d1018; border: 1px solid #1e2535; color: #334455; }
+.dc.full  { background: #0e1e14; border-color: #3a7a4a; color: #5dc87a; }
+.dc.partial { background: #1a1a0a; border-color: #7a6a2a; color: #ccaa44; }
+.dc.lost  { background: #1a0e0e; border-color: #5a2a2a; color: #cc6666; }
 
 /* 按鈕 */
 .controls { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -63,30 +66,29 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 .btn:active:not(:disabled) { background: #1e2840; }
 .btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .btn.green  { background: #0e1e14; border-color: #3a8a4a; color: #7fd4a0; }
-.btn.green.on { background: #1a3a1a; border-color: #5aaa6a; box-shadow: 0 0 8px #3a8a3a44; }
+.btn.green.on { background: #1a3a1a; border-color: #5aaa6a; }
+.btn.blue   { background: #101828; border-color: #3366aa; color: #88bbff; }
+.btn.blue.click-active { background: #1e3a28; border-color: #3a8a4a; color: #7fd4a0; animation: blink 0.8s infinite; }
 .btn.orange { background: #1e1a0a; border-color: #8a7a3a; color: #ddcc88; }
+.btn.orange.on { background: #2a2210; border-color: #aaaa44; }
+@keyframes blink { 0%,100%{opacity:1}50%{opacity:0.6} }
 .divider { flex: 1; }
-
-/* 搜尋區域調整 */
-.roi-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: #0d1018; border: 1px solid #1e2535; border-radius: 5px; padding: 8px 12px; }
-.roi-title { font-size: 0.65rem; letter-spacing: 0.1em; color: #334466; text-transform: uppercase; width: 100%; margin-bottom: 4px; }
-.roi-item { display: flex; align-items: center; gap: 6px; font-size: 0.7rem; color: #556677; }
-.roi-item input[type=range] { width: 80px; accent-color: #4a7ab5; }
-.roi-val { font-size: 0.7rem; color: #8ab4e8; min-width: 28px; }
 
 /* 提示 */
 .hint { font-size: 0.73rem; color: #556677; padding: 7px 12px; background: #13161e; border-radius: 4px; border-left: 3px solid #2a3a5a; line-height: 1.6; }
-.hint.ok  { border-left-color: #44aa66; color: #88ddaa; }
-.hint.err { border-left-color: #cc5555; color: #ffbbbb; }
-.hint.ai  { border-left-color: #aa88ff; color: #ccbbff; }
+.hint.ok   { border-left-color: #44aa66; color: #88ddaa; }
+.hint.err  { border-left-color: #cc5555; color: #ffbbbb; }
+.hint.blue { border-left-color: #4488cc; color: #aaccff; }
+.hint.warn { border-left-color: #cc9900; color: #ddbb66; }
 
 /* 圖例 */
-.legend { display: flex; gap: 12px; flex-wrap: wrap; background: #0d1018; border: 1px solid #1e2535; border-radius: 5px; padding: 7px 12px; }
-.leg { display: flex; align-items: center; gap: 5px; font-size: 0.66rem; color: #556677; }
-.leg-line { width: 22px; height: 3px; border-radius: 1px; }
-.leg-line.red { background: #ff5555; }
-.leg-line.bhi { background: #55aaff; }
-.leg-line.blo { background: #1a3a5a; border: 1px dashed #335577; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; background: #0d1018; border: 1px solid #1e2535; border-radius: 5px; padding: 7px 12px; }
+.leg { display: flex; align-items: center; gap: 5px; font-size: 0.64rem; color: #556677; }
+.leg-line { width: 20px; height: 3px; border-radius: 1px; }
+.leg-line.red-hi  { background: #ff5555; }
+.leg-line.red-lo  { background: #7a2a2a; border: 1px dashed #aa4444; }
+.leg-line.blue-hi { background: #55aaff; }
+.leg-line.blue-lo { background: #1a3a5a; border: 1px dashed #335577; }
 
 /* 校準 */
 .cal { display: flex; align-items: center; gap: 6px; font-size: 0.7rem; color: #445566; flex-wrap: wrap; }
@@ -114,11 +116,10 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v2.0 — 自動雙線同步偵測 — 斜角俯視拍攝</p>
+<p class="subtitle">v3.0 — 智慧刀口追蹤 + 遮蓋偵測 + 點擊畫線定位</p>
 
 <div class="workspace">
 
-  <!-- 影像 -->
   <div class="video-wrap" id="videoWrap">
     <div class="video-placeholder" id="placeholder">
       <svg width="44" height="44" viewBox="0 0 48 48" fill="none">
@@ -127,59 +128,41 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
         <rect x="18" y="4" width="12" height="5" rx="1.5" stroke="#446" stroke-width="1.5"/>
       </svg>
       <span>按「開啟攝影機」開始</span>
-      <span style="font-size:0.63rem;color:#334">斜角俯視拍攝，畫面需同時看到刀口和畫線</span>
+      <span style="font-size:0.63rem;color:#334">斜角俯視，畫面需同時看到刀口和鎳板</span>
     </div>
     <video id="liveVideo" autoplay playsinline muted style="display:none;"></video>
     <canvas id="overlayCanvas" style="display:none;"></canvas>
   </div>
 
-  <!-- 即時狀態 -->
   <div class="live-status">
     <div class="live-dot off" id="liveDot"></div>
     <span class="live-txt off" id="liveTxt">攝影機未開啟</span>
     <span class="live-fps" id="liveFps"></span>
   </div>
 
-  <!-- 偵測狀態 -->
   <div class="detect-row">
-    <div class="detect-chip" id="chipKnife">🔴 刀口：等待偵測</div>
-    <div class="detect-chip" id="chipMark">🔵 畫線：等待偵測</div>
+    <div class="dc" id="dcKnife">🔴 刀口：等待</div>
+    <div class="dc" id="dcMark">🔵 畫線：等待</div>
   </div>
 
-  <!-- 控制 -->
   <div class="controls">
     <button class="btn green" id="btnCam" onclick="toggleCam()">📹 開啟攝影機</button>
-    <button class="btn orange" id="btnFreeze" onclick="toggleFreeze()" disabled>⏸ 暫停畫面</button>
+    <button class="btn blue" id="btnClickMark" onclick="startMarkClick()" disabled>👆 點擊畫線定位</button>
+    <button class="btn orange" id="btnFreeze" onclick="toggleFreeze()" disabled>⏸ 暫停</button>
     <div class="divider"></div>
-    <button class="btn" onclick="resetAll()" style="font-size:0.7rem;border-color:#7a4444;color:#cc8888;">🔄 重設</button>
+    <button class="btn" onclick="resetMark()" style="font-size:0.7rem;border-color:#335577;color:#6688aa;">🔄 重設畫線</button>
+    <button class="btn" onclick="resetAll()" style="font-size:0.7rem;border-color:#7a4444;color:#cc8888;">✕ 全部重設</button>
   </div>
 
-  <!-- ROI 調整 -->
-  <div class="roi-row">
-    <div class="roi-title">搜尋區域設定（依實際拍攝畫面調整）</div>
-    <div class="roi-item">
-      <span style="color:#ff8888;">🔴 刀口搜尋</span>
-      <span>由</span>
-      <input type="range" id="knifeTop" min="0" max="90" value="40" oninput="updateROI()">
-      <span class="roi-val" id="vKnifeTop">40%</span>
-      <span>至底部</span>
-    </div>
-    <div class="roi-item">
-      <span style="color:#88bbff;">🔵 畫線搜尋</span>
-      <span>由頂部至</span>
-      <input type="range" id="markBot" min="10" max="100" value="70" oninput="updateROI()">
-      <span class="roi-val" id="vMarkBot">70%</span>
-    </div>
-  </div>
+  <div class="hint" id="hint">請按「開啟攝影機」，對準剪床刀口，程式自動偵測紅色刀口線。</div>
 
-  <!-- 圖例 -->
   <div class="legend">
-    <div class="leg"><div class="leg-line red"></div><span>刀口基準線</span></div>
-    <div class="leg"><div class="leg-line bhi"></div><span>畫線實測段</span></div>
-    <div class="leg"><div class="leg-line blo"></div><span>畫線延伸段（用於比對）</span></div>
+    <div class="leg"><div class="leg-line red-hi"></div><span>刀口（實測）</span></div>
+    <div class="leg"><div class="leg-line red-lo"></div><span>刀口（遮蓋延伸）</span></div>
+    <div class="leg"><div class="leg-line blue-hi"></div><span>畫線（實測）</span></div>
+    <div class="leg"><div class="leg-line blue-lo"></div><span>畫線（延伸）</span></div>
   </div>
 
-  <!-- 校準 -->
   <div class="cal">
     <span>畫面實際寬度：</span>
     <input type="number" id="realWidth" value="200" min="10" max="2000">
@@ -187,9 +170,6 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
     <span class="cal-tip">用尺量拍攝畫面實際寬度，固定架設後只需校準一次。</span>
   </div>
 
-  <div class="hint" id="hint">請按「開啟攝影機」，鏡頭斜角俯視剪床，畫面中同時看到刀口和鎳板畫線。</div>
-
-  <!-- 數值 -->
   <div class="metrics">
     <div class="mc"><div class="ml">左側偏移</div><div class="mv" id="vL">—</div><div class="ms" id="sL">畫線 vs 刀口</div></div>
     <div class="mc"><div class="ml">右側偏移</div><div class="mv" id="vR">—</div><div class="ms" id="sR">畫線 vs 刀口</div></div>
@@ -198,7 +178,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 
   <div class="verdict">
     <div class="vdot" id="vdot"></div>
-    <div class="vtxt" id="vtxt">開啟攝影機後自動偵測並顯示量測結果</div>
+    <div class="vtxt" id="vtxt">開啟攝影機後自動偵測刀口，放入鎳板後點擊畫線</div>
   </div>
 
 </div>
@@ -212,28 +192,23 @@ let W=0, H=0;
 let stream=null, running=false, frozen=false, raf=null;
 let frameCount=0, lastFpsT=0;
 
-// ROI 設定（百分比）
-let roiKnifeTop=0.40;  // 刀口搜尋從 40% 開始往下
-let roiMarkBot =0.70;  // 畫線搜尋從頂部到 70%
+// 刀口：8段，每段有「有效/遮蓋」狀態
+const KNIFE_SEGS = 8;
+let knifeSegs = null;   // Array of { x, y, valid, covered }
+let knifeLinear = null; // { p1, p2 } 量測用
 
-// 時間軸平滑緩衝（保留最近 N 幀）
-const SMOOTH_N=6;
-let knifeHistory=[];  // 每幀的 { xs, ys }
-let markHistory =[];  // 每幀的 { segXs, segYs, segValid }
+// 畫線：點擊後啟動追蹤
+let markAnchorY = null;
+let markData    = null;   // { segXs, segYs, segValid, spline }
+let markClickPending = false;
 
-// 當前平滑後的結果
-let knifeSmooth=null;  // { xs, ys, p1, p2 }
-let markSmooth =null;  // { segXs, segYs, segValid, spline }
+// 時間軸平滑
+const SMOOTH_N = 5;
+let knifeHistory = [];  // 每幀各段 y 值
+let markHistory  = [];
 
 // offscreen canvas
 let offC=null, offCtx2=null;
-
-function updateROI(){
-  roiKnifeTop=parseInt(document.getElementById('knifeTop').value)/100;
-  roiMarkBot =parseInt(document.getElementById('markBot').value)/100;
-  document.getElementById('vKnifeTop').textContent=Math.round(roiKnifeTop*100)+'%';
-  document.getElementById('vMarkBot').textContent =Math.round(roiMarkBot*100)+'%';
-}
 
 // ─── 攝影機 ───────────────────────────────────────────────────────────────
 async function toggleCam(){
@@ -254,9 +229,10 @@ async function toggleCam(){
     running=true;
     document.getElementById('btnCam').className='btn green on';
     document.getElementById('btnCam').textContent='📹 攝影機開啟中';
+    document.getElementById('btnClickMark').disabled=false;
     document.getElementById('btnFreeze').disabled=false;
     setLive(true,'即時偵測中');
-    setHint('✅ 攝影機已開啟，正在自動偵測刀口和畫線…','ai');
+    setHint('✅ 攝影機已開啟，正在偵測刀口紅線。確認紅線位置後，推入鎳板，再按「點擊畫線定位」。','ok');
     loop();
   } catch(e){ setHint('⚠ 無法開啟攝影機：'+e.message,'err'); }
 }
@@ -268,31 +244,76 @@ function stopCam(){
   video.style.display='none'; video.srcObject=null; overlay.style.display='none';
   document.getElementById('btnCam').className='btn green';
   document.getElementById('btnCam').textContent='📹 開啟攝影機';
+  document.getElementById('btnClickMark').disabled=true;
   document.getElementById('btnFreeze').disabled=true;
-  document.getElementById('btnFreeze').textContent='⏸ 暫停畫面';
   setLive(false,'攝影機已關閉');
-  resetChips(); resetMetrics();
+  resetAll();
 }
 
 function toggleFreeze(){
   frozen=!frozen;
-  document.getElementById('btnFreeze').textContent=frozen?'▶ 繼續偵測':'⏸ 暫停畫面';
+  document.getElementById('btnFreeze').textContent=frozen?'▶ 繼續':'⏸ 暫停';
   document.getElementById('btnFreeze').className=frozen?'btn orange on':'btn orange';
-  setHint(frozen?'畫面已暫停，數值鎖定。':'繼續即時偵測中。', frozen?'':'ai');
+  setHint(frozen?'⏸ 畫面已暫停，數值鎖定。':'▶ 繼續即時偵測。', frozen?'warn':'ok');
+}
+
+// ─── 點擊畫線定位 ─────────────────────────────────────────────────────────
+function startMarkClick(){
+  if(!running){ setHint('⚠ 請先開啟攝影機。','err'); return; }
+  markClickPending=true;
+  overlay.classList.add('clickable');
+  document.getElementById('btnClickMark').className='btn blue click-active';
+  document.getElementById('btnClickMark').textContent='👆 點擊中…';
+  setHint('👆 請點擊鎳板上藍色/紫色畫線的位置（點附近即可）。','blue');
+}
+
+overlay.addEventListener('click', e=>{
+  if(!markClickPending) return;
+  const r=overlay.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
+  handleMarkClick(x,y);
+});
+overlay.addEventListener('touchend', e=>{
+  e.preventDefault();
+  if(!markClickPending) return;
+  const t=e.changedTouches[0], r=overlay.getBoundingClientRect();
+  handleMarkClick((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));
+},{passive:false});
+
+function handleMarkClick(x,y){
+  markClickPending=false;
+  overlay.classList.remove('clickable');
+  document.getElementById('btnClickMark').className='btn blue';
+  document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
+  markAnchorY=y;
+  markHistory=[];
+  setHint('✅ 畫線已定位，即時追蹤中。調整鎳板使偏差趨近 0。','ok');
+}
+
+function resetMark(){
+  markAnchorY=null; markData=null; markHistory=[];
+  resetMetrics();
+  setHint('畫線已重設。推入鎳板後按「點擊畫線定位」。','blue');
+  setDC('dcMark','等待','');
 }
 
 function resetAll(){
-  knifeHistory=[]; markHistory=[]; knifeSmooth=null; markSmooth=null;
-  resetChips(); resetMetrics();
-  setHint('已重設。攝影機持續運作中。','ai');
+  knifeSegs=null; knifeLinear=null; knifeHistory=[];
+  markAnchorY=null; markData=null; markHistory=[];
+  markClickPending=false;
+  overlay.classList.remove('clickable');
+  document.getElementById('btnClickMark').className='btn blue';
+  document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
+  resetMetrics();
+  setDC('dcKnife','等待',''); setDC('dcMark','等待','');
+  setHint('已全部重設。對準刀口，程式自動偵測紅線。','ok');
 }
 
 // ─── 主迴圈 ───────────────────────────────────────────────────────────────
 function loop(){
   if(!running){ return; }
   raf=requestAnimationFrame(loop);
-
-  if(frozen) return; // 暫停時不更新
+  if(frozen) return;
 
   frameCount++;
   const now=performance.now();
@@ -301,37 +322,43 @@ function loop(){
     frameCount=0; lastFpsT=now;
   }
 
-  // 取當前幀像素
   const fd=getFrame(); if(!fd) return;
 
-  // 偵測刀口（下半部）
-  const kResult=detectKnife(fd);
+  // ── 刀口偵測（每幀，帶遮蓋偵測）──
+  const kResult=detectKnifeWithCover(fd);
   if(kResult){
     knifeHistory.push(kResult);
     if(knifeHistory.length>SMOOTH_N) knifeHistory.shift();
-    knifeSmooth=temporalSmoothKnife(knifeHistory);
+    knifeSegs=smoothKnifeHistory(knifeHistory);
+    knifeLinear=knifeToLinear(knifeSegs);
+    const validCount=knifeSegs.filter(s=>s.valid&&!s.covered).length;
+    if(validCount>=4) setDC('dcKnife','實測'+validCount+'/'+KNIFE_SEGS+'段','full');
+    else if(validCount>=1) setDC('dcKnife','部分'+validCount+'/'+KNIFE_SEGS+'段（遮蓋中）','partial');
+    else setDC('dcKnife','遮蓋，延伸中','partial');
+  } else {
+    setDC('dcKnife','未偵測','lost');
   }
 
-  // 偵測畫線（上半部）
-  const mResult=detectMark(fd);
-  if(mResult){
-    markHistory.push(mResult);
-    if(markHistory.length>SMOOTH_N) markHistory.shift();
-    markSmooth=temporalSmoothMark(markHistory);
+  // ── 畫線追蹤（點擊後才啟動）──
+  if(markAnchorY!==null){
+    const mResult=detectMark(fd, markAnchorY);
+    if(mResult && mResult.validCount>=2){
+      markHistory.push(mResult);
+      if(markHistory.length>SMOOTH_N) markHistory.shift();
+      markData=smoothMarkHistory(markHistory);
+      // 更新 anchorY 為當前最佳值（讓追蹤跟著鎳板移動）
+      markAnchorY=markAnchorY*0.85 + mResult.bestY*0.15;
+      setDC('dcMark','實測'+mResult.validCount+'/16段','full');
+    } else {
+      setDC('dcMark','搜尋中…','partial');
+    }
   }
 
-  // 更新偵測狀態指示
-  updateChips(!!knifeSmooth, !!markSmooth);
-
-  // 繪製 overlay
+  // ── 繪製 ──
   octx.clearRect(0,0,W,H);
-  drawROIGuide();
-  if(knifeSmooth) drawKnife();
-  if(markSmooth)  drawMark();
-  if(knifeSmooth && markSmooth) {
-    drawMeasureArrows();
-    updateMetrics();
-  }
+  if(knifeSegs) drawKnifeSegs();
+  if(markData)  drawMark();
+  if(knifeLinear && markData) { drawMeasureArrows(); updateMetrics(); }
 }
 
 function getFrame(){
@@ -342,83 +369,135 @@ function getFrame(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 刀口偵測（在畫面下半部 roiKnifeTop ~ 100%）
+// 刀口偵測：8段分別偵測，並判斷每段是否被遮蓋
 // ══════════════════════════════════════════════════════════════════════════
-function detectKnife(fd){
+function detectKnifeWithCover(fd){
   const data=fd.data;
-  const yS=Math.floor(H*roiKnifeTop), yE=H;
-  const xL=Math.floor(W*0.15), xR=Math.floor(W*0.85);
-
-  // 灰階 + 高斯模糊（只處理 ROI 區域）
+  // 先用全域水平投影找大概的刀口 Y
+  const xL=Math.floor(W*0.1), xR=Math.floor(W*0.9);
   const gray=new Uint8Array(W*H);
-  for(let y=yS;y<yE;y++) for(let x=0;x<W;x++){
-    const i=(y*W+x)*4; gray[y*W+x]=Math.round(data[i]*0.299+data[i+1]*0.587+data[i+2]*0.114);
-  }
-  const blurred=gBlurROI(gray,W,yS,yE,7);
+  for(let i=0;i<W*H;i++) gray[i]=Math.round(data[i*4]*0.299+data[i*4+1]*0.587+data[i*4+2]*0.114);
+  const blurred=gBlurY(gray,W,H,7);
+  const thr=otsuFull(blurred,W,H);
 
-  // Otsu（只用 ROI 區域的像素）
-  const thr=otsuROI(blurred,W,yS,yE);
-
-  // 水平投影
+  // 水平投影（全寬）
   const rowW=new Float32Array(H);
-  for(let y=yS;y<yE;y++){
+  for(let y=0;y<H;y++){
     let c=0; for(let x=xL;x<xR;x++) if(blurred[y*W+x]>thr) c++;
     rowW[y]=c/(xR-xL);
   }
-  const sr=gSmooth1D_range(rowW,yS,yE,6);
+  const sr=gSmooth1D(rowW,H,6);
   const grad=new Float32Array(H);
-  for(let y=yS+2;y<yE-2;y++) grad[y]=sr[y-2]-sr[y+2];
+  for(let y=3;y<H-3;y++) grad[y]=sr[y-3]-sr[y+3];
+  const ym=Math.floor(H*0.05);
+  let globalBestY=Math.floor(H*0.6), globalBestG=0;
+  for(let y=ym;y<H-ym;y++) if(grad[y]>globalBestG){ globalBestG=grad[y]; globalBestY=y; }
 
-  let bY=yS+Math.floor((yE-yS)/2), bG=0;
-  for(let y=yS;y<yE;y++) if(grad[y]>bG){ bG=grad[y]; bY=y; }
+  if(globalBestG<0.02) return null;
 
-  if(bG<0.03) return null; // 找不到明顯邊緣
+  // 8段各自偵測
+  const segs=[];
+  for(let s=0;s<KNIFE_SEGS;s++){
+    const sx=Math.floor(W*(0.05+s*0.9/KNIFE_SEGS));
+    const ex=Math.floor(W*(0.05+(s+1)*0.9/KNIFE_SEGS));
+    const cx=(sx+ex)/2;
+    const segRange=Math.min(60,Math.floor(H*0.12));
+    const yS=Math.max(2,globalBestY-segRange), yE=Math.min(H-2,globalBestY+segRange);
 
-  // 8段定位
-  const SEGS=8, sXs=[],sYs=[];
-  for(let s=0;s<SEGS;s++){
-    const sx=Math.floor(W*(0.05+s*0.9/SEGS)), ex=Math.floor(W*(0.05+(s+1)*0.9/SEGS));
-    sXs.push((sx+ex)/2); sYs.push(findEdgeROI(blurred,sx,ex,bY,W,yS,yE));
+    // 在這段找梯度最大行
+    let bestY=globalBestY, bestG=0, maxBright=0, maxGrad=0;
+    for(let y=yS;y<yE;y++){
+      let ab=0,bb=0,wb=0,cnt=0;
+      for(let x=sx;x<ex;x++){
+        ab+=blurred[Math.max(0,y-3)*W+x]||0;
+        bb+=blurred[Math.min(H-1,y+3)*W+x]||0;
+        wb+=blurred[y*W+x]||0;
+        cnt++;
+      }
+      const g=cnt>0?(ab-bb)/cnt:0;
+      const avgB=cnt>0?wb/cnt:0;
+      if(g>bestG){ bestG=g; bestY=y; }
+      if(avgB>maxBright) maxBright=avgB;
+    }
+
+    // 判斷是否被遮蓋：
+    // 該段若亮度梯度很弱 → 白色亮帶消失 → 被鎳板遮蓋
+    const covered = bestG < globalBestG * 0.25;
+    const valid   = bestG > 0.02;
+
+    segs.push({ x:cx, y:bestY, valid, covered, grad:bestG });
   }
-  const {slope:sl,intercept:ic}=linReg(sXs,sYs);
-  const lx=Math.floor(W*0.05), rx=Math.floor(W*0.95);
-  return{xs:sXs,ys:sYs,p1:{x:lx,y:sl*lx+ic},p2:{x:rx,y:sl*rx+ic}};
+  return segs;
+}
+
+// 將 8 段結果平滑並外推被遮蓋的段
+function smoothKnifeHistory(history){
+  if(!history.length) return null;
+  const n=history.length;
+  const result=[];
+  for(let s=0;s<KNIFE_SEGS;s++){
+    // 只取有效且未被遮蓋的幀做加權平均
+    let sumY=0, sumW=0, coveredCount=0;
+    history.forEach((h,i)=>{
+      const seg=h[s];
+      if(seg.valid && !seg.covered){ sumY+=seg.y*(i+1); sumW+=(i+1); }
+      if(seg.covered) coveredCount++;
+    });
+    const covered=coveredCount > n*0.5; // 超過一半的幀該段被遮蓋
+    const y=sumW>0 ? sumY/sumW : (history[history.length-1][s]?.y || 0);
+    result.push({ x:history[0][s].x, y, valid:sumW>0, covered });
+  }
+
+  // 被遮蓋的段：用相鄰有效段做線性插值/外推
+  const validSegs=result.filter(s=>!s.covered&&s.valid);
+  if(validSegs.length>=2){
+    const {slope,intercept}=linReg(validSegs.map(s=>s.x), validSegs.map(s=>s.y));
+    result.forEach(seg=>{ if(seg.covered||!seg.valid) seg.y=slope*seg.x+intercept; });
+  }
+  return result;
+}
+
+function knifeToLinear(segs){
+  if(!segs||!segs.length) return null;
+  const xs=segs.map(s=>s.x), ys=segs.map(s=>s.y);
+  const {slope,intercept}=linReg(xs,ys);
+  return{p1:{x:Math.floor(W*0.05),y:slope*W*0.05+intercept},p2:{x:Math.floor(W*0.95),y:slope*W*0.95+intercept}};
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 畫線偵測（在畫面上半部 0 ~ roiMarkBot）
+// 畫線偵測
 // ══════════════════════════════════════════════════════════════════════════
-function detectMark(fd){
+function detectMark(fd, anchorY){
   const data=fd.data;
-  const yS=0, yE=Math.floor(H*roiMarkBot);
+  const SEGS=16;
+  const sw=Math.floor(W*0.08);
+  const xC=Math.floor(W/2);
+  const sr2=Math.floor(H*0.25);
+  const yS=Math.max(0,anchorY-sr2), yE=Math.min(H-1,anchorY+sr2);
 
-  // 每行藍色優勢分
+  // 藍色優勢垂直掃描
   const rowScore=new Float32Array(H);
-  const xL=Math.floor(W*0.1), xR=Math.floor(W*0.9);
-  for(let y=yS;y<yE;y++){
+  for(let y=yS;y<=yE;y++){
     let sc=0;
-    for(let x=xL;x<xR;x++){
+    for(let x=xC-sw;x<xC+sw;x++){
       const i=(y*W+x)*4; const r=data[i],g=data[i+1],b=data[i+2];
       if(r+g+b>620||r+g+b<20) continue;
       const adv=b-Math.max(r,g); if(adv>0) sc+=adv;
     }
-    rowScore[y]=sc/(xR-xL);
+    rowScore[y]=sc/(sw*2);
   }
-  const sm=gSmooth1D_range(rowScore,yS,yE,6);
+  const sm=gSmooth1D_range(rowScore,yS,yE,5);
+  let bY=Math.round(anchorY), bS=0;
+  for(let y=yS;y<=yE;y++) if(sm[y]>bS){ bS=sm[y]; bY=y; }
+  if(bS<0.3) return null;
 
-  // 找峰值
-  let bY=Math.floor(yE/2), bS=0;
-  for(let y=yS;y<yE;y++) if(sm[y]>bS){ bS=sm[y]; bY=y; }
-
-  if(bS<0.5) return null; // 找不到明顯藍色
-
-  // 16段定位 + 亞像素
-  const SEGS=16; const sXs=[],sYs=[],sV=[];
+  // 16段亞像素定位
+  const sXs=[],sYs=[],sV=[];
   for(let s=0;s<SEGS;s++){
     const sx=Math.floor(W*s/SEGS), ex=Math.floor(W*(s+1)/SEGS), cx=(sx+ex)/2;
     const lr=Math.min(25,Math.floor(H*0.04));
     let tot=0,wY=0,wT=0,lbS=0;
-    for(let y=Math.max(yS,bY-lr);y<=Math.min(yE-1,bY+lr);y++){
+    for(let y=Math.max(0,bY-lr);y<=Math.min(H-1,bY+lr);y++){
       let sc=0,cnt=0;
       for(let x=sx;x<ex;x++){
         const i=(y*W+x)*4; const r=data[i],g=data[i+1],b=data[i+2];
@@ -430,15 +509,12 @@ function detectMark(fd){
       tot+=sc; wY+=y*avg; wT+=avg;
     }
     const subY=wT>0?wY/wT:bY;
-    sXs.push(cx); sYs.push(subY);
-    sV.push(tot>(ex-sx)*8&&lbS>5);
+    sXs.push(cx); sYs.push(subY); sV.push(tot>(ex-sx)*8&&lbS>5);
   }
 
-  // 線性迴歸外推
+  // 線性迴歸外推無效段
   const vXs=sXs.filter((_,i)=>sV[i]), vYs=sYs.filter((_,i)=>sV[i]);
   let rr=null; if(vXs.length>=2) rr=linReg(vXs,vYs);
-
-  // 填補無效段
   const fYs=[...sYs];
   const vIdx=sV.map((v,i)=>v?i:-1).filter(i=>i>=0);
   if(vIdx.length>=2){
@@ -451,38 +527,12 @@ function detectMark(fd){
       for(let s=vIdx[vIdx.length-1]+1;s<SEGS;s++) fYs[s]=rr.slope*sXs[s]+rr.intercept;
     }
   }
-
   const vc=sV.filter(Boolean).length;
-  if(vc<2) return null; // 有效段太少，不可信
-
-  return{segXs:sXs,segYs:fYs,segValid:sV,validCount:vc};
+  return{bestY:bY,segXs:sXs,segYs:fYs,segValid:sV,validCount:vc};
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// 時間軸平滑（temporal smoothing）
-// ══════════════════════════════════════════════════════════════════════════
-function temporalSmoothKnife(history){
+function smoothMarkHistory(history){
   if(!history.length) return null;
-  const n=history.length;
-  // 加權平均（越新的幀權重越高）
-  const SEGS=history[0].xs.length;
-  const sXs=history[0].xs; // X 不變
-  const sYs=new Array(SEGS).fill(0);
-  let totalW=0;
-  history.forEach((h,i)=>{
-    const w=i+1; // 越新權重越大
-    for(let s=0;s<SEGS;s++) sYs[s]+=h.ys[s]*w;
-    totalW+=w;
-  });
-  for(let s=0;s<SEGS;s++) sYs[s]/=totalW;
-  const {slope:sl,intercept:ic}=linReg(sXs,sYs);
-  const lx=Math.floor(W*0.05), rx=Math.floor(W*0.95);
-  return{xs:sXs,ys:sYs,p1:{x:lx,y:sl*lx+ic},p2:{x:rx,y:sl*rx+ic}};
-}
-
-function temporalSmoothMark(history){
-  if(!history.length) return null;
-  const n=history.length;
   const SEGS=history[0].segXs.length;
   const sXs=history[0].segXs;
   const sYs=new Array(SEGS).fill(0);
@@ -497,51 +547,62 @@ function temporalSmoothMark(history){
     totalW+=w;
   });
   for(let s=0;s<SEGS;s++) sYs[s]/=totalW;
-  const validThresh=totalW*0.4; // 超過 40% 幀有效才算有效段
-  const smoothValid=sV.map(v=>v>validThresh);
+  const smoothValid=sV.map(v=>v>totalW*0.4);
   const spline=catmullRom(sXs,sYs,8);
   return{segXs:sXs,segYs:sYs,segValid:smoothValid,spline};
 }
 
 // ─── 繪製 ─────────────────────────────────────────────────────────────────
-function drawROIGuide(){
-  // 刀口搜尋區域下緣淡線
+function drawKnifeSegs(){
+  if(!knifeSegs||!knifeSegs.length) return;
+  const xs=knifeSegs.map(s=>s.x), ys=knifeSegs.map(s=>s.y);
+
+  // 延伸到左右邊緣
+  const {slope,intercept}=linReg(xs,ys);
+  const pts=[{x:0,y:intercept},{...knifeSegs[0]},
+    ...knifeSegs,
+    {...knifeSegs[knifeSegs.length-1]},{x:W,y:slope*W+intercept}];
+
   octx.save();
+  // 先畫整條暗紅底線（延伸線）
   octx.beginPath();
-  octx.moveTo(0,H*roiKnifeTop); octx.lineTo(W,H*roiKnifeTop);
-  octx.strokeStyle='rgba(255,85,85,0.2)'; octx.lineWidth=1; octx.setLineDash([4,6]); octx.stroke(); octx.setLineDash([]);
-  // 畫線搜尋區域下緣淡線
-  octx.beginPath();
-  octx.moveTo(0,H*roiMarkBot); octx.lineTo(W,H*roiMarkBot);
-  octx.strokeStyle='rgba(85,170,255,0.2)'; octx.lineWidth=1; octx.setLineDash([4,6]); octx.stroke(); octx.setLineDash([]);
+  pts.forEach((p,i)=>{ if(i===0) octx.moveTo(p.x,p.y); else octx.lineTo(p.x,p.y); });
+  octx.strokeStyle='#7a2a2a'; octx.lineWidth=1.5; octx.setLineDash([5,5]); octx.stroke(); octx.setLineDash([]);
+
+  // 再畫有效未遮蓋的段（亮紅色）
+  for(let s=0;s<knifeSegs.length;s++){
+    if(!knifeSegs[s].covered && knifeSegs[s].valid){
+      const sx=Math.floor(W*(0.05+s*0.9/KNIFE_SEGS));
+      const ex=Math.floor(W*(0.05+(s+1)*0.9/KNIFE_SEGS));
+      octx.beginPath(); octx.moveTo(sx,knifeSegs[s].y); octx.lineTo(ex,knifeSegs[s].y);
+      octx.strokeStyle='#ff5555'; octx.lineWidth=2.5; octx.stroke();
+    }
+  }
+
+  // 控制點
+  knifeSegs.forEach(seg=>{
+    octx.beginPath(); octx.arc(seg.x,seg.y,4,0,Math.PI*2);
+    octx.fillStyle=seg.covered?'#7a2a2a':'#ff5555';
+    octx.globalAlpha=seg.covered?0.5:0.8; octx.fill(); octx.globalAlpha=1;
+  });
+
+  // 標籤
+  octx.fillStyle='#ff5555'; octx.font='bold 12px Courier New';
+  octx.shadowColor='#000'; octx.shadowBlur=3;
+  octx.fillText('刀口',12,ys[0]-7); octx.shadowBlur=0;
   octx.restore();
 }
 
-function drawKnife(){
-  if(!knifeSmooth) return;
-  const {xs,ys}=knifeSmooth;
-  octx.save(); octx.beginPath();
-  const s0=(ys[1]-ys[0])/(xs[1]-xs[0]||1);
-  octx.moveTo(0,ys[0]-s0*xs[0]);
-  for(let i=0;i<xs.length;i++) octx.lineTo(xs[i],ys[i]);
-  const sl=(ys[xs.length-1]-ys[xs.length-2])/(xs[xs.length-1]-xs[xs.length-2]||1);
-  octx.lineTo(W,ys[xs.length-1]+sl*(W-xs[xs.length-1]));
-  octx.strokeStyle='#ff5555'; octx.lineWidth=2.5; octx.setLineDash([7,4]); octx.stroke(); octx.setLineDash([]);
-  octx.fillStyle='#ff5555'; octx.font='bold 12px Courier New';
-  octx.shadowColor='#000'; octx.shadowBlur=3;
-  octx.fillText('刀口',12,ys[0]-7); octx.shadowBlur=0; octx.restore();
-}
-
 function drawMark(){
-  if(!markSmooth||!markSmooth.spline) return;
-  const {segXs,segYs,segValid,spline}=markSmooth;
+  if(!markData||!markData.spline) return;
+  const {segXs,segYs,segValid,spline}=markData;
   const SEGS=segValid.length, pps=Math.ceil(spline.length/SEGS);
   octx.save();
-  // 暗色延伸線
+  // 暗藍延伸底線
   octx.beginPath();
   spline.forEach((p,i)=>{ if(i===0) octx.moveTo(p.x,p.y); else octx.lineTo(p.x,p.y); });
   octx.strokeStyle='#1a3a5a'; octx.lineWidth=1.5; octx.setLineDash([4,4]); octx.stroke(); octx.setLineDash([]);
-  // 亮色有效段
+  // 亮藍有效段
   let inV=false;
   spline.forEach((p,i)=>{
     const si=Math.min(SEGS-1,Math.floor(i/pps)), isV=segValid[si];
@@ -553,7 +614,6 @@ function drawMark(){
     octx.lineTo(p.x,p.y);
   });
   if(inV){ octx.strokeStyle='#55aaff'; octx.lineWidth=2.5; octx.setLineDash([]); octx.stroke(); }
-  // 標籤
   const fv=segValid.findIndex(Boolean);
   if(fv>=0){
     octx.fillStyle='#55aaff'; octx.font='bold 12px Courier New';
@@ -565,12 +625,11 @@ function drawMark(){
 }
 
 function drawMeasureArrows(){
-  if(!knifeSmooth||!markSmooth) return;
   const lx=W*0.2, rx=W*0.8;
-  const kyL=yAtX(knifeSmooth.p1,knifeSmooth.p2,lx);
-  const kyR=yAtX(knifeSmooth.p1,knifeSmooth.p2,rx);
-  const myL=spYatX(markSmooth.spline,lx);
-  const myR=spYatX(markSmooth.spline,rx);
+  const kyL=yAtX(knifeLinear.p1,knifeLinear.p2,lx);
+  const kyR=yAtX(knifeLinear.p1,knifeLinear.p2,rx);
+  const myL=spYatX(markData.spline,lx);
+  const myR=spYatX(markData.spline,rx);
   drawArrow(lx,kyL,lx,myL,'#ffd060');
   drawArrow(rx,kyR,rx,myR,'#ffd060');
   const ppm=getRW()/W;
@@ -595,10 +654,10 @@ function drawArrow(x1,y1,x2,y2,color){
 // ─── 即時量測 ─────────────────────────────────────────────────────────────
 function updateMetrics(){
   const lx=W*0.2, rx=W*0.8;
-  const kyL=yAtX(knifeSmooth.p1,knifeSmooth.p2,lx);
-  const kyR=yAtX(knifeSmooth.p1,knifeSmooth.p2,rx);
-  const myL=spYatX(markSmooth.spline,lx);
-  const myR=spYatX(markSmooth.spline,rx);
+  const kyL=yAtX(knifeLinear.p1,knifeLinear.p2,lx);
+  const kyR=yAtX(knifeLinear.p1,knifeLinear.p2,rx);
+  const myL=spYatX(markData.spline,lx);
+  const myR=spYatX(markData.spline,rx);
   const ppm=getRW()/W;
   const dl=(myL-kyL)*ppm, dr=(myR-kyR)*ppm, diff=Math.abs(dl-dr);
   const fmt=v=>(v>=0?'+':'')+v.toFixed(2);
@@ -623,118 +682,60 @@ function resetMetrics(){
   document.getElementById('sL').textContent='畫線 vs 刀口';
   document.getElementById('sR').textContent='畫線 vs 刀口';
   document.getElementById('vdot').className='vdot';
-  document.getElementById('vtxt').textContent='開啟攝影機後自動偵測並顯示量測結果';
+  document.getElementById('vtxt').textContent='開啟攝影機後自動偵測刀口，放入鎳板後點擊畫線';
 }
 
-function updateChips(kFound, mFound){
-  const kc=document.getElementById('chipKnife');
-  const mc=document.getElementById('chipMark');
-  kc.textContent=kFound?'🔴 刀口：已偵測':'🔴 刀口：未偵測';
-  kc.className='detect-chip '+(kFound?'found':'lost');
-  mc.textContent=mFound?'🔵 畫線：已偵測':'🔵 畫線：未偵測';
-  mc.className='detect-chip '+(mFound?'found':'lost');
-}
-
-function resetChips(){
-  document.getElementById('chipKnife').textContent='🔴 刀口：等待偵測';
-  document.getElementById('chipKnife').className='detect-chip';
-  document.getElementById('chipMark').textContent='🔵 畫線：等待偵測';
-  document.getElementById('chipMark').className='detect-chip';
-}
-
-// ─── 像素工具 ─────────────────────────────────────────────────────────────
-function gBlurROI(gray,W,yS,yE,r){
-  const out=new Float32Array(W*(yE-yS+r*2));
-  // 簡化：只做 Y 方向模糊（速度更快）
-  const result=new Float32Array(gray.length);
-  for(let y=yS;y<yE;y++) for(let x=0;x<W;x++){
+// ─── 工具函數 ─────────────────────────────────────────────────────────────
+function gBlurY(gray,W,H,r){
+  const out=new Float32Array(gray.length);
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
     let s=0,w=0;
     for(let d=-r;d<=r;d++){
-      const yy=Math.min(yE-1,Math.max(yS,y+d));
+      const yy=Math.min(H-1,Math.max(0,y+d));
       const wt=Math.exp(-d*d/(2*r*r/4)); s+=gray[yy*W+x]*wt; w+=wt;
     }
-    result[y*W+x]=s/w;
+    out[y*W+x]=s/w;
   }
-  return result;
+  return out;
 }
-
-function otsuROI(data,W,yS,yE){
+function otsuFull(data,W,H){
   const h=new Array(256).fill(0);
-  for(let y=yS;y<yE;y++) for(let x=0;x<W;x++) h[Math.min(255,Math.floor(data[y*W+x]||0))]++;
-  const tot=(yE-yS)*W; let sa=0; for(let i=0;i<256;i++) sa+=i*h[i];
+  for(let i=0;i<W*H;i++) h[Math.min(255,Math.floor(data[i]||0))]++;
+  const tot=W*H; let sa=0; for(let i=0;i<256;i++) sa+=i*h[i];
   let sb=0,wb=0,bv=0,bt=0;
   for(let t=0;t<256;t++){wb+=h[t];if(!wb)continue;const wf=tot-wb;if(!wf)break;sb+=t*h[t];const mb=sb/wb,mf=(sa-sb)/wf,v=wb*wf*(mb-mf)**2;if(v>bv){bv=v;bt=t;}}
   return bt;
 }
-
-function gSmooth1D_range(arr,yS,yE,r){
-  const out=new Float32Array(arr.length);
-  for(let y=yS;y<yE;y++){
-    let s=0,w=0;
-    for(let k=-r;k<=r;k++){
-      const idx=Math.min(yE-1,Math.max(yS,y+k));
-      const wt=Math.exp(-k*k/(2*r*r)); s+=arr[idx]*wt; w+=wt;
-    }
-    out[y]=s/w;
-  }
+function gSmooth1D(arr,len,r){
+  const out=new Float32Array(len);
+  for(let i=0;i<len;i++){let s=0,w=0;for(let k=-r;k<=r;k++){const idx=Math.min(len-1,Math.max(0,i+k));const wt=Math.exp(-k*k/(2*r*r));s+=arr[idx]*wt;w+=wt;}out[i]=s/w;}
   return out;
 }
-
-function findEdgeROI(blurred,xS,xE,aY,W,yS,yE){
-  const r=Math.min(60,Math.floor((yE-yS)*0.2));
-  const ys2=Math.max(yS+2,aY-r), ye2=Math.min(yE-2,aY+r);
-  let bY=aY,bG=0;
-  for(let y=ys2;y<ye2;y++){
-    let a=0,b=0,c=0;
-    for(let x=xS;x<xE;x++){
-      a+=blurred[Math.max(0,y-3)*W+x]||0;
-      b+=blurred[Math.min(W*W,y+3)*W+x]||0; // 防止越界
-      c++;
-    }
-    const g=c>0?(a-b)/c:0;
-    if(g>bG){bG=g;bY=y;}
-  }
-  return bY;
+function gSmooth1D_range(arr,yS,yE,r){
+  const out=new Float32Array(arr.length);
+  for(let y=yS;y<=yE;y++){let s=0,w=0;for(let k=-r;k<=r;k++){const idx=Math.min(yE,Math.max(yS,y+k));const wt=Math.exp(-k*k/(2*r*r));s+=arr[idx]*wt;w+=wt;}out[y]=s/w;}
+  return out;
 }
-
 function catmullRom(xs,ys,steps){
   const pts=[],n=xs.length;
   for(let i=0;i<n-1;i++){
     const p0=i>0?{x:xs[i-1],y:ys[i-1]}:{x:xs[i]-(xs[i+1]-xs[i]),y:ys[i]-(ys[i+1]-ys[i])};
-    const p1={x:xs[i],y:ys[i]};
-    const p2={x:xs[i+1],y:ys[i+1]};
+    const p1={x:xs[i],y:ys[i]},p2={x:xs[i+1],y:ys[i+1]};
     const p3=i<n-2?{x:xs[i+2],y:ys[i+2]}:{x:xs[i+1]+(xs[i+1]-xs[i]),y:ys[i+1]+(ys[i+1]-ys[i])};
     for(let t=0;t<=steps;t++){
       const tt=t/steps,t2=tt*tt,t3=t2*tt;
-      pts.push({
-        x:0.5*((2*p1.x)+(-p0.x+p2.x)*tt+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
-        y:0.5*((2*p1.y)+(-p0.y+p2.y)*tt+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3)
-      });
+      pts.push({x:0.5*((2*p1.x)+(-p0.x+p2.x)*tt+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),y:0.5*((2*p1.y)+(-p0.y+p2.y)*tt+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3)});
     }
   }
   return pts;
 }
-
 function linReg(xs,ys){
   const n=xs.length,mx=xs.reduce((a,b)=>a+b)/n,my=ys.reduce((a,b)=>a+b)/n;
-  let num=0,den=0;
-  for(let i=0;i<n;i++){num+=(xs[i]-mx)*(ys[i]-my);den+=(xs[i]-mx)**2;}
-  const slope=den?num/den:0;
-  return{slope,intercept:my-slope*mx};
+  let num=0,den=0; for(let i=0;i<n;i++){num+=(xs[i]-mx)*(ys[i]-my);den+=(xs[i]-mx)**2;}
+  const slope=den?num/den:0; return{slope,intercept:my-slope*mx};
 }
-
-function spYatX(spline,tx){
-  if(!spline||!spline.length) return 0;
-  let c=spline[0],md=Math.abs(spline[0].x-tx);
-  for(const p of spline){const d=Math.abs(p.x-tx);if(d<md){md=d;c=p;}}
-  return c.y;
-}
-
-function yAtX(p1,p2,x){
-  if(Math.abs(p2.x-p1.x)<0.5) return p1.y;
-  return p1.y+(p2.y-p1.y)*(x-p1.x)/(p2.x-p1.x);
-}
-
+function spYatX(spline,tx){if(!spline||!spline.length)return 0;let c=spline[0],md=Math.abs(spline[0].x-tx);for(const p of spline){const d=Math.abs(p.x-tx);if(d<md){md=d;c=p;}}return c.y;}
+function yAtX(p1,p2,x){if(Math.abs(p2.x-p1.x)<0.5)return p1.y;return p1.y+(p2.y-p1.y)*(x-p1.x)/(p2.x-p1.x);}
 function cls(v,t){return v<t*0.5?'good':v<t?'warn':'bad';}
 function getRW(){return parseFloat(document.getElementById('realWidth').value)||200;}
 function setLive(on,msg){
@@ -742,6 +743,12 @@ function setLive(on,msg){
   document.getElementById('liveTxt').className='live-txt'+(on?'':' off');
   document.getElementById('liveTxt').textContent=msg;
   if(!on) document.getElementById('liveFps').textContent='';
+}
+function setDC(id,msg,type){
+  const el=document.getElementById(id);
+  const icon=id==='dcKnife'?'🔴':'🔵';
+  el.textContent=icon+' '+(id==='dcKnife'?'刀口':'畫線')+'：'+msg;
+  el.className='dc'+(type?' '+type:'');
 }
 function setHint(msg,type=''){const el=document.getElementById('hint');el.textContent=msg;el.className='hint'+(type?' '+type:'');}
 </script>
