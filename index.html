@@ -15,6 +15,8 @@
  v1.0  動態即時版初版。兩階段：先鎖定刀口，再追蹤畫線。
  v2.0  完全自動雙線同步偵測。斜角俯視，上半部找畫線，下半部找刀口。
         加入時間軸平滑消除幀間跳動。
+v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半部。
+        解決刀口在畫面上半部時偵測不到的問題。
  v3.0  智慧刀口追蹤 + 遮蓋偵測：
         - 刀口每幀動態偵測（8段），有效段顯示亮紅色
         - 鎳板推入遮蓋刀口時，被遮住的段自動切換暗紅色延伸線
@@ -22,7 +24,7 @@
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.0
+ 目前版本：v3.1
  最後更新：2025-06
 =============================================================================
 -->
@@ -116,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.0 — 智慧刀口追蹤 + 遮蓋偵測 + 點擊畫線定位</p>
+<p class="subtitle">v3.1 — 刀口全畫面搜尋，不限制搜尋區域</p>
 
 <div class="workspace">
 
@@ -390,7 +392,8 @@ function detectKnifeWithCover(fd){
   const grad=new Float32Array(H);
   for(let y=3;y<H-3;y++) grad[y]=sr[y-3]-sr[y+3];
   const ym=Math.floor(H*0.05);
-  let globalBestY=Math.floor(H*0.6), globalBestG=0;
+  // 全畫面搜尋，排除上下 5% 邊緣
+  let globalBestY=Math.floor(H*0.5), globalBestG=0;
   for(let y=ym;y<H-ym;y++) if(grad[y]>globalBestG){ globalBestG=grad[y]; globalBestY=y; }
 
   if(globalBestG<0.02) return null;
