@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.5.2
+ 目前版本：v3.5.3
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.5.2 — 修正鎖定後 knifeLinear 被覆蓋問題</p>
+<p class="subtitle">v3.5.3 — 鎖定後完全用基準直線，只用白色比例判斷遮蓋</p>
 
 <div class="workspace">
 
@@ -359,22 +359,31 @@ function loop(){
 
   const fd=getFrame(); if(!fd) return;
 
-  // ── 刀口偵測（每幀，帶遮蓋偵測）──
-  const kResult=detectKnifeWithCover(fd);
-  if(kResult){
-    knifeHistory.push(kResult);
-    if(knifeHistory.length>SMOOTH_N) knifeHistory.shift();
-    knifeSegs=smoothKnifeHistory(knifeHistory);
-    // 未鎖定才更新 knifeLinear，鎖定後保持基準直線
-    if(!knifeBaselineLocked){
-      knifeLinear=knifeToLinear(knifeSegs);
-    }
-    const validCount=knifeSegs.filter(s=>s.valid&&!s.covered).length;
-    if(validCount>=4) setDC('dcKnife','實測'+validCount+'/'+KNIFE_SEGS+'段','full');
-    else if(validCount>=1) setDC('dcKnife','部分'+validCount+'/'+KNIFE_SEGS+'段（遮蓋中）','partial');
-    else setDC('dcKnife','遮蓋，延伸中','partial');
+  // ── 刀口偵測 ──
+  if(knifeBaselineLocked){
+    // 鎖定模式：只掃描各段白色比例，判斷遮蓋，不更新位置
+    knifeSegs=scanKnifeCoverage(fd);
+    // knifeLinear 維持鎖定時的值，不更新
+    const covCount=knifeSegs?knifeSegs.filter(s=>s.covered).length:0;
+    const totCount=KNIFE_SEGS;
+    if(covCount===0) setDC('dcKnife','已鎖定，全段可見','full');
+    else if(covCount<totCount) setDC('dcKnife','已鎖定，'+covCount+'/'+totCount+'段遮蓋','partial');
+    else setDC('dcKnife','已鎖定，全段遮蓋','partial');
   } else {
-    setDC('dcKnife','未偵測','lost');
+    // 未鎖定：動態偵測
+    const kResult=detectKnifeWithCover(fd);
+    if(kResult){
+      knifeHistory.push(kResult);
+      if(knifeHistory.length>SMOOTH_N) knifeHistory.shift();
+      knifeSegs=smoothKnifeHistory(knifeHistory);
+      knifeLinear=knifeToLinear(knifeSegs);
+      const validCount=knifeSegs.filter(s=>s.valid&&!s.covered).length;
+      if(validCount>=4) setDC('dcKnife','實測'+validCount+'/'+KNIFE_SEGS+'段','full');
+      else if(validCount>=1) setDC('dcKnife','部分'+validCount+'/'+KNIFE_SEGS+'段','partial');
+      else setDC('dcKnife','未偵測','lost');
+    } else {
+      setDC('dcKnife','未偵測','lost');
+    }
   }
 
   // ── 畫線追蹤（點擊後才啟動）──
@@ -416,6 +425,59 @@ function getFrame(){
 // ══════════════════════════════════════════════════════════════════════════
 // 刀口偵測：8段分別偵測，並判斷每段是否被遮蓋
 // ══════════════════════════════════════════════════════════════════════════
+
+// 鎖定後每幀掃描：只判斷各段是否被遮蓋（白色比例）
+function scanKnifeCoverage(fd){
+  if(!knifeBaseline) return null;
+  const data=fd.data;
+  const {slope,intercept}=knifeBaseline;
+  const WHITE_THR=160;
+  const segs=[];
+
+  // 先算全域白色最大值（鎖定時的參考）
+  const xL=Math.floor(W*0.1), xR=Math.floor(W*0.9);
+  let globalMaxWhite=0;
+  for(let s=0;s<KNIFE_SEGS;s++){
+    const sx=Math.floor(W*(0.05+s*0.9/KNIFE_SEGS));
+    const ex=Math.floor(W*(0.05+(s+1)*0.9/KNIFE_SEGS));
+    const lineY=Math.round(slope*(sx+ex)/2+intercept);
+    const scanRange=20;
+    let maxW=0;
+    for(let y=Math.max(0,lineY-scanRange);y<=Math.min(H-1,lineY+scanRange);y++){
+      let cnt=0;
+      for(let x=sx;x<ex;x++){
+        const i=(y*W+x)*4;
+        if(data[i]>WHITE_THR&&data[i+1]>WHITE_THR&&data[i+2]>WHITE_THR) cnt++;
+      }
+      const ratio=cnt/(ex-sx);
+      if(ratio>maxW) maxW=ratio;
+    }
+    if(maxW>globalMaxWhite) globalMaxWhite=maxW;
+  }
+
+  for(let s=0;s<KNIFE_SEGS;s++){
+    const sx=Math.floor(W*(0.05+s*0.9/KNIFE_SEGS));
+    const ex=Math.floor(W*(0.05+(s+1)*0.9/KNIFE_SEGS));
+    const cx=(sx+ex)/2;
+    const lineY=Math.round(slope*cx+intercept);
+    const scanRange=20;
+    let segMaxWhite=0;
+    for(let y=Math.max(0,lineY-scanRange);y<=Math.min(H-1,lineY+scanRange);y++){
+      let cnt=0;
+      for(let x=sx;x<ex;x++){
+        const i=(y*W+x)*4;
+        if(data[i]>WHITE_THR&&data[i+1]>WHITE_THR&&data[i+2]>WHITE_THR) cnt++;
+      }
+      const ratio=cnt/(ex-sx);
+      if(ratio>segMaxWhite) segMaxWhite=ratio;
+    }
+    // 白色比例低於全域的 25% → 被遮蓋
+    const covered=segMaxWhite < Math.max(globalMaxWhite*0.25, 0.05);
+    segs.push({x:cx, y:lineY, valid:true, covered});
+  }
+  return segs;
+}
+
 function detectKnifeWithCover(fd){
   const data=fd.data;
   const xL=Math.floor(W*0.1), xR=Math.floor(W*0.9);
