@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.1
+ 目前版本：v3.2
  最後更新：2025-06
 =============================================================================
 -->
@@ -43,7 +43,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 .video-wrap { position: relative; width: 100%; background: #181c24; border: 1px solid #2a2e3a; border-radius: 6px; overflow: hidden; min-height: 200px; }
 #liveVideo { display: block; width: 100%; height: auto; }
 #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
-#overlayCanvas.clickable { pointer-events: auto; cursor: crosshair; }
+.video-wrap.click-active { cursor: crosshair; }
 .video-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 240px; color: #334455; font-size: 0.82rem; gap: 8px; }
 
 /* 狀態列 */
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.1 — 刀口全畫面搜尋，不限制搜尋區域</p>
+<p class="subtitle">v3.2 — 加入鎖定刀口 + 修正 iOS 點擊問題</p>
 
 <div class="workspace">
 
@@ -149,6 +149,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 
   <div class="controls">
     <button class="btn green" id="btnCam" onclick="toggleCam()">📹 開啟攝影機</button>
+    <button class="btn" id="btnLockKnife" onclick="lockKnife()" disabled style="border-color:#aa6633;color:#ffcc88;background:#1e1208;">🔒 鎖定刀口</button>
     <button class="btn blue" id="btnClickMark" onclick="startMarkClick()" disabled>👆 點擊畫線定位</button>
     <button class="btn orange" id="btnFreeze" onclick="toggleFreeze()" disabled>⏸ 暫停</button>
     <div class="divider"></div>
@@ -204,6 +205,11 @@ let markAnchorY = null;
 let markData    = null;   // { segXs, segYs, segValid, spline }
 let markClickPending = false;
 
+// 鎖定刀口
+let knifeLockedSegs=null;
+let knifeLockedLinear=null;
+let knifeLocked=false;
+
 // 時間軸平滑
 const SMOOTH_N = 5;
 let knifeHistory = [];  // 每幀各段 y 值
@@ -231,7 +237,7 @@ async function toggleCam(){
     running=true;
     document.getElementById('btnCam').className='btn green on';
     document.getElementById('btnCam').textContent='📹 攝影機開啟中';
-    document.getElementById('btnClickMark').disabled=false;
+    document.getElementById('btnLockKnife').disabled=false;
     document.getElementById('btnFreeze').disabled=false;
     setLive(true,'即時偵測中');
     setHint('✅ 攝影機已開啟，正在偵測刀口紅線。確認紅線位置後，推入鎳板，再按「點擊畫線定位」。','ok');
@@ -246,6 +252,7 @@ function stopCam(){
   video.style.display='none'; video.srcObject=null; overlay.style.display='none';
   document.getElementById('btnCam').className='btn green';
   document.getElementById('btnCam').textContent='📹 開啟攝影機';
+  document.getElementById('btnLockKnife').disabled=true;
   document.getElementById('btnClickMark').disabled=true;
   document.getElementById('btnFreeze').disabled=true;
   setLive(false,'攝影機已關閉');
@@ -263,28 +270,29 @@ function toggleFreeze(){
 function startMarkClick(){
   if(!running){ setHint('⚠ 請先開啟攝影機。','err'); return; }
   markClickPending=true;
-  overlay.classList.add('clickable');
+  document.getElementById('videoWrap').classList.add('click-active');
   document.getElementById('btnClickMark').className='btn blue click-active';
   document.getElementById('btnClickMark').textContent='👆 點擊中…';
   setHint('👆 請點擊鎳板上藍色/紫色畫線的位置（點附近即可）。','blue');
 }
 
-overlay.addEventListener('click', e=>{
+// 點擊事件改用 videoWrap（iOS Safari 相容性更好）
+document.getElementById('videoWrap').addEventListener('click', e=>{
   if(!markClickPending) return;
   const r=overlay.getBoundingClientRect();
   const x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
   handleMarkClick(x,y);
 });
-overlay.addEventListener('touchend', e=>{
-  e.preventDefault();
+document.getElementById('videoWrap').addEventListener('touchend', e=>{
   if(!markClickPending) return;
+  e.preventDefault();
   const t=e.changedTouches[0], r=overlay.getBoundingClientRect();
   handleMarkClick((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));
 },{passive:false});
 
 function handleMarkClick(x,y){
   markClickPending=false;
-  overlay.classList.remove('clickable');
+  document.getElementById('videoWrap').classList.remove('click-active');
   document.getElementById('btnClickMark').className='btn blue';
   document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
   markAnchorY=y;
@@ -292,8 +300,22 @@ function handleMarkClick(x,y){
   setHint('✅ 畫線已定位，即時追蹤中。調整鎳板使偏差趨近 0。','ok');
 }
 
+function lockKnife(){
+  if(!knifeSegs||!knifeLinear){ setHint('⚠ 請先對準刀口，等紅線穩定後再鎖定。','err'); return; }
+  knifeLockedSegs=[...knifeSegs];
+  knifeLockedLinear={p1:{...knifeLinear.p1},p2:{...knifeLinear.p2}};
+  knifeLocked=true;
+  document.getElementById('btnLockKnife').className='btn';
+  document.getElementById('btnLockKnife').style='border-color:#44aa66;color:#7fd4a0;background:#0e1e14;';
+  document.getElementById('btnLockKnife').textContent='🔒 刀口已鎖定';
+  document.getElementById('btnLockKnife').disabled=true;
+  document.getElementById('btnClickMark').disabled=false;
+  setHint('✅ 刀口已鎖定！現在推入鎳板，按「點擊畫線定位」點擊畫線。','ok');
+}
+
 function resetMark(){
   markAnchorY=null; markData=null; markHistory=[];
+  document.getElementById('videoWrap').classList.remove('click-active');
   resetMetrics();
   setHint('畫線已重設。推入鎳板後按「點擊畫線定位」。','blue');
   setDC('dcMark','等待','');
@@ -301,11 +323,15 @@ function resetMark(){
 
 function resetAll(){
   knifeSegs=null; knifeLinear=null; knifeHistory=[];
+  knifeLockedSegs=null; knifeLockedLinear=null; knifeLocked=false;
   markAnchorY=null; markData=null; markHistory=[];
   markClickPending=false;
-  overlay.classList.remove('clickable');
+  document.getElementById('videoWrap').classList.remove('click-active');
   document.getElementById('btnClickMark').className='btn blue';
   document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
+  document.getElementById('btnLockKnife').className='btn';
+  document.getElementById('btnLockKnife').style='border-color:#aa6633;color:#ffcc88;background:#1e1208;';
+  document.getElementById('btnLockKnife').textContent='🔒 鎖定刀口';
   resetMetrics();
   setDC('dcKnife','等待',''); setDC('dcMark','等待','');
   setHint('已全部重設。對準刀口，程式自動偵測紅線。','ok');
@@ -358,9 +384,16 @@ function loop(){
 
   // ── 繪製 ──
   octx.clearRect(0,0,W,H);
-  if(knifeSegs) drawKnifeSegs();
+  // 鎖定模式：使用鎖定的刀口座標
+  if(knifeLocked){
+    // 畫鎖定的刀口（含遮蓋偵測：比對當前幀判斷哪些段被遮蓋）
+    if(knifeLockedSegs) drawKnifeLockedSegs(knifeSegs);
+  } else {
+    if(knifeSegs) drawKnifeSegs();
+  }
   if(markData)  drawMark();
-  if(knifeLinear && markData) { drawMeasureArrows(); updateMetrics(); }
+  const activeKnifeLinear = knifeLocked ? knifeLockedLinear : knifeLinear;
+  if(activeKnifeLinear && markData) { drawMeasureArrows(activeKnifeLinear); updateMetrics(activeKnifeLinear); }
 }
 
 function getFrame(){
@@ -556,6 +589,42 @@ function smoothMarkHistory(history){
 }
 
 // ─── 繪製 ─────────────────────────────────────────────────────────────────
+
+// 繪製鎖定的刀口（用當前偵測結果判斷哪些段被遮蓋）
+function drawKnifeLockedSegs(currentSegs){
+  if(!knifeLockedSegs) return;
+  const xs=knifeLockedSegs.map(s=>s.x), ys=knifeLockedSegs.map(s=>s.y);
+  const {slope,intercept}=linReg(xs,ys);
+
+  octx.save();
+  // 暗紅底線（延伸到邊緣）
+  octx.beginPath();
+  octx.moveTo(0,intercept);
+  knifeLockedSegs.forEach(s=>octx.lineTo(s.x,s.y));
+  octx.lineTo(W,slope*W+intercept);
+  octx.strokeStyle='#7a2a2a'; octx.lineWidth=1.5; octx.setLineDash([5,5]); octx.stroke(); octx.setLineDash([]);
+
+  // 判斷哪些段被遮蓋（用當前幀的梯度與鎖定時比較）
+  knifeLockedSegs.forEach((seg,s)=>{
+    const isCovered = currentSegs && currentSegs[s] && currentSegs[s].covered;
+    if(!isCovered){
+      const sx=Math.floor(W*(0.05+s*0.9/KNIFE_SEGS));
+      const ex=Math.floor(W*(0.05+(s+1)*0.9/KNIFE_SEGS));
+      octx.beginPath(); octx.moveTo(sx,seg.y); octx.lineTo(ex,seg.y);
+      octx.strokeStyle='#ff5555'; octx.lineWidth=2.5; octx.stroke();
+    }
+    // 控制點
+    octx.beginPath(); octx.arc(seg.x,seg.y,4,0,Math.PI*2);
+    octx.fillStyle=isCovered?'#7a2a2a':'#ff5555';
+    octx.globalAlpha=isCovered?0.5:0.8; octx.fill(); octx.globalAlpha=1;
+  });
+
+  octx.fillStyle='#ff5555'; octx.font='bold 12px Courier New';
+  octx.shadowColor='#000'; octx.shadowBlur=3;
+  octx.fillText('刀口🔒',12,ys[0]-7); octx.shadowBlur=0;
+  octx.restore();
+}
+
 function drawKnifeSegs(){
   if(!knifeSegs||!knifeSegs.length) return;
   const xs=knifeSegs.map(s=>s.x), ys=knifeSegs.map(s=>s.y);
@@ -627,10 +696,10 @@ function drawMark(){
   octx.restore();
 }
 
-function drawMeasureArrows(){
+function drawMeasureArrows(kl){
   const lx=W*0.2, rx=W*0.8;
-  const kyL=yAtX(knifeLinear.p1,knifeLinear.p2,lx);
-  const kyR=yAtX(knifeLinear.p1,knifeLinear.p2,rx);
+  const kyL=yAtX(kl.p1,kl.p2,lx);
+  const kyR=yAtX(kl.p1,kl.p2,rx);
   const myL=spYatX(markData.spline,lx);
   const myR=spYatX(markData.spline,rx);
   drawArrow(lx,kyL,lx,myL,'#ffd060');
@@ -655,10 +724,10 @@ function drawArrow(x1,y1,x2,y2,color){
 }
 
 // ─── 即時量測 ─────────────────────────────────────────────────────────────
-function updateMetrics(){
+function updateMetrics(kl){
   const lx=W*0.2, rx=W*0.8;
-  const kyL=yAtX(knifeLinear.p1,knifeLinear.p2,lx);
-  const kyR=yAtX(knifeLinear.p1,knifeLinear.p2,rx);
+  const kyL=yAtX(kl.p1,kl.p2,lx);
+  const kyR=yAtX(kl.p1,kl.p2,rx);
   const myL=spYatX(markData.spline,lx);
   const myR=spYatX(markData.spline,rx);
   const ppm=getRW()/W;
