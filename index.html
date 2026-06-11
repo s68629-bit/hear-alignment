@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.5.4
+ 目前版本：v3.5.5
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,11 +118,19 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.5.4 — 畫線偵測改用 R-B 差值法，不再限於藍色優勢</p>
+<p class="subtitle">v3.5.5 — 加入 Claude AI 輔助畫線定位</p>
 
 <div class="workspace">
 
-  <div class="video-wrap" id="videoWrap">
+  
+  <div id="apiKeyRow" style="display:flex;gap:6px;align-items:center;background:#0d1018;border:1px solid #2a3050;border-radius:5px;padding:7px 10px;margin-bottom:4px;">
+    <span style="font-size:0.7rem;color:#556677;white-space:nowrap;">API Key：</span>
+    <input type="password" id="apiKeyInput" placeholder="sk-ant-..." autocomplete="off"
+      style="flex:1;padding:5px 8px;background:#181e2c;border:1px solid #2e3a50;border-radius:4px;color:#8ab4e8;font-family:inherit;font-size:0.72rem;min-width:0;">
+    <button onclick="saveApiKey()" style="padding:5px 10px;border:1px solid #3a5a3a;border-radius:4px;background:#0e1a10;color:#7fd4a0;font-family:inherit;font-size:0.68rem;cursor:pointer;white-space:nowrap;">💾 記住</button>
+    <span id="keyStatus" style="font-size:0.62rem;color:#334455;">Key 僅存本機</span>
+  </div>
+<div class="video-wrap" id="videoWrap">
     <div class="video-placeholder" id="placeholder">
       <svg width="44" height="44" viewBox="0 0 48 48" fill="none">
         <rect x="4" y="8" width="40" height="28" rx="3" stroke="#446" stroke-width="1.5"/>
@@ -150,7 +158,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
   <div class="controls">
     <button class="btn green" id="btnCam" onclick="toggleCam()">📹 開啟攝影機</button>
     <button class="btn" id="btnLockKnife" onclick="lockKnifeBaseline()" disabled style="border-color:#aa6633;color:#ffcc88;background:#1e1208;">🔒 鎖定刀口</button>
-    <button class="btn blue" id="btnClickMark" onclick="startMarkClick()" disabled>👆 點擊畫線定位</button>
+    <button class="btn blue" id="btnClickMark" onclick="startMarkClick()" disabled>👆 AI 點擊定位</button>
     <div class="divider"></div>
     <button class="btn" onclick="resetMark()" style="font-size:0.7rem;border-color:#335577;color:#6688aa;">🔄 重設畫線</button>
     <button class="btn" onclick="resetAll()" style="font-size:0.7rem;border-color:#7a4444;color:#cc8888;">✕ 全部重設</button>
@@ -261,6 +269,71 @@ function stopCam(){
 
 
 // ─── 點擊畫線定位 ─────────────────────────────────────────────────────────
+
+// ─── API Key ──────────────────────────────────────────────────────────────
+function saveApiKey(){
+  const k=document.getElementById('apiKeyInput').value.trim();
+  if(!k||!k.startsWith('sk-ant-')){
+    document.getElementById('keyStatus').textContent='⚠ 格式不對';
+    return;
+  }
+  localStorage.setItem('shear_api_key',k);
+  document.getElementById('keyStatus').textContent='✅ 已儲存';
+  document.getElementById('keyStatus').style.color='#5dc87a';
+}
+function getApiKey(){
+  return document.getElementById('apiKeyInput').value.trim()||'';
+}
+(function loadKey(){
+  const saved=localStorage.getItem('shear_api_key');
+  if(saved){
+    document.getElementById('apiKeyInput').value=saved;
+    document.getElementById('keyStatus').textContent='✅ 已載入';
+    document.getElementById('keyStatus').style.color='#5dc87a';
+  }
+})();
+
+// ─── Claude AI 定位畫線 ───────────────────────────────────────────────────
+async function aiLocateMark(b64, clickX, clickY){
+  const apiKey=getApiKey();
+  if(!apiKey||!apiKey.startsWith('sk-ant-')){
+    setHint('⚠ 請先填入 API Key。','err');
+    return null;
+  }
+  const prompt=`這是一張剪床鎳板的即時攝影畫面（${W}×${H}px，左上角為原點，y向下）。
+畫面中有一條用藍色或深藍色麥克筆畫的橫向標記線（裁切基準線），在金屬鎳板表面。
+使用者點擊了 (${Math.round(clickX)}, ${Math.round(clickY)}) 的位置，表示畫線大約在那附近。
+請找出這條畫線，給出它在圖片左側 x=${Math.round(W*0.2)} 和右側 x=${Math.round(W*0.8)} 的 y 座標。
+只回 JSON：{"left_y":數值,"right_y":數值,"confidence":0到1,"found":true或false}`;
+
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key':apiKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
+      body:JSON.stringify({
+        model:'claude-haiku-4-5-20251001',
+        max_tokens:200,
+        messages:[{role:'user',content:[
+          {type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}},
+          {type:'text',text:prompt}
+        ]}]
+      })
+    });
+    if(!resp.ok) return null;
+    const data=await resp.json();
+    const raw=data.content.map(c=>c.text||'').join('');
+    return JSON.parse(raw.replace(/```json|```/g,'').trim());
+  } catch(e){
+    console.error('AI error:',e);
+    return null;
+  }
+}
+
 function startMarkClick(){
   if(!running){ setHint('⚠ 請先開啟攝影機。','err'); return; }
   markClickPending=true;
