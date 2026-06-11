@@ -236,7 +236,6 @@ async function toggleCam(){
     running=true;
     document.getElementById('btnCam').className='btn green on';
     document.getElementById('btnCam').textContent='📹 攝影機開啟中';
-    document.getElementById('btnLockKnife').disabled=false;
     document.getElementById('btnFreeze').disabled=false;
     setLive(true,'即時偵測中');
     setHint('✅ 攝影機已開啟，正在偵測刀口紅線。確認紅線位置後，推入鎳板，再按「點擊畫線定位」。','ok');
@@ -251,7 +250,6 @@ function stopCam(){
   video.style.display='none'; video.srcObject=null; overlay.style.display='none';
   document.getElementById('btnCam').className='btn green';
   document.getElementById('btnCam').textContent='📹 開啟攝影機';
-  document.getElementById('btnLockKnife').disabled=true;
   document.getElementById('btnClickMark').disabled=true;
   document.getElementById('btnFreeze').disabled=true;
   setLive(false,'攝影機已關閉');
@@ -304,10 +302,6 @@ function lockKnife(){
   knifeLockedSegs=[...knifeSegs];
   knifeLockedLinear={p1:{...knifeLinear.p1},p2:{...knifeLinear.p2}};
   knifeLocked=true;
-  document.getElementById('btnLockKnife').className='btn';
-  document.getElementById('btnLockKnife').style='border-color:#44aa66;color:#7fd4a0;background:#0e1e14;';
-  document.getElementById('btnLockKnife').textContent='🔒 刀口已鎖定';
-  document.getElementById('btnLockKnife').disabled=true;
   document.getElementById('btnClickMark').disabled=false;
   setHint('✅ 刀口已鎖定！現在推入鎳板，按「點擊畫線定位」點擊畫線。','ok');
 }
@@ -328,9 +322,6 @@ function resetAll(){
   document.getElementById('videoWrap').classList.remove('click-active');
   document.getElementById('btnClickMark').className='btn blue';
   document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
-  document.getElementById('btnLockKnife').className='btn';
-  document.getElementById('btnLockKnife').style='border-color:#aa6633;color:#ffcc88;background:#1e1208;';
-  document.getElementById('btnLockKnife').textContent='🔒 鎖定刀口';
   resetMetrics();
   setDC('dcKnife','等待',''); setDC('dcMark','等待','');
   setHint('已全部重設。對準刀口，程式自動偵測紅線。','ok');
