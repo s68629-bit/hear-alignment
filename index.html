@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.2
+ 目前版本：v3.3
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.2 — 加入鎖定刀口 + 修正 iOS 點擊問題</p>
+<p class="subtitle">v3.3 — 移除鎖定，全自動雙線即時偵測，降低藍線門檻</p>
 
 <div class="workspace">
 
@@ -149,7 +149,6 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 
   <div class="controls">
     <button class="btn green" id="btnCam" onclick="toggleCam()">📹 開啟攝影機</button>
-    <button class="btn" id="btnLockKnife" onclick="lockKnife()" disabled style="border-color:#aa6633;color:#ffcc88;background:#1e1208;">🔒 鎖定刀口</button>
     <button class="btn blue" id="btnClickMark" onclick="startMarkClick()" disabled>👆 點擊畫線定位</button>
     <button class="btn orange" id="btnFreeze" onclick="toggleFreeze()" disabled>⏸ 暫停</button>
     <div class="divider"></div>
@@ -508,7 +507,7 @@ function detectMark(fd, anchorY){
   const SEGS=16;
   const sw=Math.floor(W*0.08);
   const xC=Math.floor(W/2);
-  const sr2=Math.floor(H*0.25);
+  const sr2=Math.floor(H*0.4); // 擴大搜尋範圍
   const yS=Math.max(0,anchorY-sr2), yE=Math.min(H-1,anchorY+sr2);
 
   // 藍色優勢垂直掃描
@@ -525,7 +524,7 @@ function detectMark(fd, anchorY){
   const sm=gSmooth1D_range(rowScore,yS,yE,5);
   let bY=Math.round(anchorY), bS=0;
   for(let y=yS;y<=yE;y++) if(sm[y]>bS){ bS=sm[y]; bY=y; }
-  if(bS<0.3) return null;
+  if(bS<0.05) return null; // 降低門檻，更容易找到藍線
 
   // 16段亞像素定位
   const sXs=[],sYs=[],sV=[];
@@ -545,7 +544,7 @@ function detectMark(fd, anchorY){
       tot+=sc; wY+=y*avg; wT+=avg;
     }
     const subY=wT>0?wY/wT:bY;
-    sXs.push(cx); sYs.push(subY); sV.push(tot>(ex-sx)*8&&lbS>5);
+    sXs.push(cx); sYs.push(subY); sV.push(tot>(ex-sx)*2&&lbS>1); // 降低有效段門檻
   }
 
   // 線性迴歸外推無效段
