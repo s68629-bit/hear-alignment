@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.5.3
+ 目前版本：v3.5.4
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.5.3 — 鎖定後完全用基準直線，只用白色比例判斷遮蓋</p>
+<p class="subtitle">v3.5.4 — 畫線偵測改用 R-B 差值法，不再限於藍色優勢</p>
 
 <div class="workspace">
 
@@ -630,18 +630,19 @@ function detectMark(fd, anchorY){
     const lr=Math.min(25,Math.floor(H*0.04));
     let tot=0,wY=0,wT=0,lbS=0;
     for(let y=Math.max(0,bY-lr);y<=Math.min(H-1,bY+lr);y++){
-      let sc=0,cnt=0;
+      let sumRB=0,cnt=0;
       for(let x=sx;x<ex;x++){
-        const i=(y*W+x)*4; const r=data[i],g=data[i+1],b=data[i+2];
-        if(r+g+b>620||r+g+b<20) continue;
-        const adv=b-Math.max(r,g); if(adv>0){sc+=adv;cnt++;}
+        const i=(y*W+x)*4;
+        const r=data[i],g=data[i+1],b=data[i+2],br=r+g+b;
+        if(br<100||br>580) continue;
+        sumRB+=(r-b); cnt++;
       }
-      const avg=cnt?sc/cnt:0;
-      if(avg>lbS) lbS=avg;
-      tot+=sc; wY+=y*avg; wT+=avg;
+      const rbScore=cnt>0?(refRB-sumRB/cnt):0;
+      if(rbScore>lbS) lbS=rbScore;
+      if(rbScore>0){ tot+=rbScore; wY+=y*rbScore; wT+=rbScore; }
     }
     const subY=wT>0?wY/wT:bY;
-    sXs.push(cx); sYs.push(subY); sV.push(tot>(ex-sx)*2&&lbS>1); // 降低有效段門檻
+    sXs.push(cx); sYs.push(subY); sV.push(tot>2&&lbS>1);
   }
 
   // 線性迴歸外推無效段
