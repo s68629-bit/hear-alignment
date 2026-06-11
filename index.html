@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.4
+ 目前版本：v3.5
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.4 — 修正點擊按鈕啟用 + 紅線穩定追蹤</p>
+<p class="subtitle">v3.5 — 刀口改找白色下緣 + 鎖定直線模式 + 移除暫停</p>
 
 <div class="workspace">
 
@@ -149,8 +149,8 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 
   <div class="controls">
     <button class="btn green" id="btnCam" onclick="toggleCam()">📹 開啟攝影機</button>
+    <button class="btn" id="btnLockKnife" onclick="lockKnifeBaseline()" disabled style="border-color:#aa6633;color:#ffcc88;background:#1e1208;">🔒 鎖定刀口</button>
     <button class="btn blue" id="btnClickMark" onclick="startMarkClick()" disabled>👆 點擊畫線定位</button>
-    <button class="btn orange" id="btnFreeze" onclick="toggleFreeze()" disabled>⏸ 暫停</button>
     <div class="divider"></div>
     <button class="btn" onclick="resetMark()" style="font-size:0.7rem;border-color:#335577;color:#6688aa;">🔄 重設畫線</button>
     <button class="btn" onclick="resetAll()" style="font-size:0.7rem;border-color:#7a4444;color:#cc8888;">✕ 全部重設</button>
@@ -195,7 +195,9 @@ let stream=null, running=false, frozen=false, raf=null;
 let frameCount=0, lastFpsT=0;
 
 // 刀口：8段，每段有「有效/遮蓋」狀態
-let lastKnifeGlobalY = null; // 上一幀的刀口 Y，找不到時使用
+let lastKnifeGlobalY = null; // 上一幀的刀口 Y
+let knifeBaseline = null;     // 鎖定時的基準直線 {slope, intercept}
+let knifeBaselineLocked = false; // 是否已鎖定
 const KNIFE_SEGS = 8;
 let knifeSegs = null;   // Array of { x, y, valid, covered }
 let knifeLinear = null; // { p1, p2 } 量測用
@@ -237,7 +239,6 @@ async function toggleCam(){
     running=true;
     document.getElementById('btnCam').className='btn green on';
     document.getElementById('btnCam').textContent='📹 攝影機開啟中';
-    document.getElementById('btnFreeze').disabled=false;
     document.getElementById('btnClickMark').disabled=false;
     setLive(true,'即時偵測中');
     setHint('✅ 攝影機已開啟，正在偵測刀口紅線。確認紅線位置後，推入鎳板，再按「點擊畫線定位」。','ok');
@@ -253,17 +254,10 @@ function stopCam(){
   document.getElementById('btnCam').className='btn green';
   document.getElementById('btnCam').textContent='📹 開啟攝影機';
   document.getElementById('btnClickMark').disabled=true;
-  document.getElementById('btnFreeze').disabled=true;
   setLive(false,'攝影機已關閉');
   resetAll();
 }
 
-function toggleFreeze(){
-  frozen=!frozen;
-  document.getElementById('btnFreeze').textContent=frozen?'▶ 繼續':'⏸ 暫停';
-  document.getElementById('btnFreeze').className=frozen?'btn orange on':'btn orange';
-  setHint(frozen?'⏸ 畫面已暫停，數值鎖定。':'▶ 繼續即時偵測。', frozen?'warn':'ok');
-}
 
 // ─── 點擊畫線定位 ─────────────────────────────────────────────────────────
 function startMarkClick(){
@@ -294,6 +288,7 @@ function handleMarkClick(x,y){
   document.getElementById('videoWrap').classList.remove('click-active');
   document.getElementById('btnClickMark').className='btn blue';
   document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
+  if(document.getElementById('btnLockKnife')){ document.getElementById('btnLockKnife').style='border-color:#aa6633;color:#ffcc88;background:#1e1208;'; document.getElementById('btnLockKnife').textContent='🔒 鎖定刀口'; document.getElementById('btnLockKnife').disabled=false; }
   markAnchorY=y;
   markHistory=[];
   setHint('✅ 畫線已定位，即時追蹤中。調整鎳板使偏差趨近 0。','ok');
@@ -308,6 +303,21 @@ function lockKnife(){
   setHint('✅ 刀口已鎖定！現在推入鎳板，按「點擊畫線定位」點擊畫線。','ok');
 }
 
+
+function lockKnifeBaseline(){
+  if(!knifeSegs||!knifeLinear){ setHint('⚠ 請先對準刀口，等紅線穩定後再鎖定。','err'); return; }
+  const validSegs=knifeSegs.filter(s=>s.valid&&!s.covered);
+  if(validSegs.length<3){ setHint('⚠ 有效段太少，請調整角度使刀口更清楚。','err'); return; }
+  const {slope,intercept}=linReg(validSegs.map(s=>s.x),validSegs.map(s=>s.y));
+  knifeBaseline={slope,intercept};
+  knifeBaselineLocked=true;
+  document.getElementById('btnLockKnife').style='border-color:#44aa66;color:#7fd4a0;background:#0e1e14;';
+  document.getElementById('btnLockKnife').textContent='🔒 已鎖定';
+  document.getElementById('btnLockKnife').disabled=true;
+  document.getElementById('btnClickMark').disabled=false;
+  setHint('✅ 刀口已鎖定為直線！推入鎳板後按「點擊畫線定位」。','ok');
+}
+
 function resetMark(){
   markAnchorY=null; markData=null; markHistory=[];
   document.getElementById('videoWrap').classList.remove('click-active');
@@ -318,12 +328,14 @@ function resetMark(){
 
 function resetAll(){
   knifeSegs=null; knifeLinear=null; knifeHistory=[]; lastKnifeGlobalY=null;
+  knifeBaseline=null; knifeBaselineLocked=false;
   knifeLockedSegs=null; knifeLockedLinear=null; knifeLocked=false;
   markAnchorY=null; markData=null; markHistory=[];
   markClickPending=false;
   document.getElementById('videoWrap').classList.remove('click-active');
   document.getElementById('btnClickMark').className='btn blue';
   document.getElementById('btnClickMark').textContent='👆 點擊畫線定位';
+  if(document.getElementById('btnLockKnife')){ document.getElementById('btnLockKnife').style='border-color:#aa6633;color:#ffcc88;background:#1e1208;'; document.getElementById('btnLockKnife').textContent='🔒 鎖定刀口'; document.getElementById('btnLockKnife').disabled=false; }
   resetMetrics();
   setDC('dcKnife','等待',''); setDC('dcMark','等待','');
   setHint('已全部重設。對準刀口，程式自動偵測紅線。','ok');
@@ -400,69 +412,84 @@ function getFrame(){
 // ══════════════════════════════════════════════════════════════════════════
 function detectKnifeWithCover(fd){
   const data=fd.data;
-  // 先用全域水平投影找大概的刀口 Y
   const xL=Math.floor(W*0.1), xR=Math.floor(W*0.9);
-  const gray=new Uint8Array(W*H);
-  for(let i=0;i<W*H;i++) gray[i]=Math.round(data[i*4]*0.299+data[i*4+1]*0.587+data[i*4+2]*0.114);
-  const blurred=gBlurY(gray,W,H,7);
-  const thr=otsuFull(blurred,W,H);
 
-  // 水平投影（全寬）
-  const rowW=new Float32Array(H);
+  // ══ 新演算法：找白色區域下緣 ══
+  // 白色刀口亮帶：R,G,B 都很高（>180）
+  // 每行統計白色像素比例，找白色區域的最下緣
+  const WHITE_THR = 160; // 白色像素門檻
+  const rowWhite = new Float32Array(H);
   for(let y=0;y<H;y++){
-    let c=0; for(let x=xL;x<xR;x++) if(blurred[y*W+x]>thr) c++;
-    rowW[y]=c/(xR-xL);
+    let cnt=0;
+    for(let x=xL;x<xR;x++){
+      const i=(y*W+x)*4;
+      if(data[i]>WHITE_THR && data[i+1]>WHITE_THR && data[i+2]>WHITE_THR) cnt++;
+    }
+    rowWhite[y]=cnt/(xR-xL);
   }
-  const sr=gSmooth1D(rowW,H,6);
-  const grad=new Float32Array(H);
-  for(let y=3;y<H-3;y++) grad[y]=sr[y-3]-sr[y+3];
-  const ym=Math.floor(H*0.05);
-  // 全畫面搜尋，排除上下 5% 邊緣
-  let globalBestY=Math.floor(H*0.5), globalBestG=0;
-  for(let y=ym;y<H-ym;y++) if(grad[y]>globalBestG){ globalBestG=grad[y]; globalBestY=y; }
+  const sr=gSmooth1D(rowWhite,H,5);
 
-  if(globalBestG<0.02){
-    // 找不到刀口：用上一幀位置繼續追蹤（補償鎳板遮蓋）
+  // 找白色比例最高的行
+  const ym=Math.floor(H*0.03);
+  let maxWhiteY=ym, maxWhiteVal=0;
+  for(let y=ym;y<H-ym;y++) if(sr[y]>maxWhiteVal){ maxWhiteVal=sr[y]; maxWhiteY=y; }
+
+  // 白色區域太少 → 找不到刀口
+  if(maxWhiteVal<0.15){
     if(lastKnifeGlobalY!==null){
-      globalBestY=lastKnifeGlobalY;
+      // 用上一幀位置繼續
+      var globalBestY=lastKnifeGlobalY;
+      var globalBestG=0.01; // 標記為低信心
     } else {
       return null;
     }
   } else {
-    lastKnifeGlobalY=globalBestY; // 記憶當前找到的位置
+    // 找白色區域的下緣（白色比例從高變低的位置）
+    var globalBestY=maxWhiteY, globalBestG=maxWhiteVal;
+    for(let y=maxWhiteY;y<H-ym;y++){
+      if(sr[y]<maxWhiteVal*0.3){ globalBestY=y; break; }
+    }
+    lastKnifeGlobalY=globalBestY;
   }
 
-  // 8段各自偵測
+  // 8段各自偵測白色下緣
   const segs=[];
   for(let s=0;s<KNIFE_SEGS;s++){
     const sx=Math.floor(W*(0.05+s*0.9/KNIFE_SEGS));
     const ex=Math.floor(W*(0.05+(s+1)*0.9/KNIFE_SEGS));
     const cx=(sx+ex)/2;
-    const segRange=Math.min(80,Math.floor(H*0.15)); // 擴大段搜尋範圍
-    const yS=Math.max(2,globalBestY-segRange), yE=Math.min(H-2,globalBestY+segRange);
+    const segRange=Math.min(80,Math.floor(H*0.15));
+    const yS=Math.max(1,globalBestY-segRange), yE=Math.min(H-1,globalBestY+segRange);
 
-    // 在這段找梯度最大行
-    let bestY=globalBestY, bestG=0, maxBright=0, maxGrad=0;
-    for(let y=yS;y<yE;y++){
-      let ab=0,bb=0,wb=0,cnt=0;
+    // 計算此段每行的白色比例
+    let bestY=globalBestY, bestWhite=0, segMaxWhite=0;
+    const segWhite=new Float32Array(H);
+    for(let y=yS;y<=yE;y++){
+      let cnt=0;
       for(let x=sx;x<ex;x++){
-        ab+=blurred[Math.max(0,y-3)*W+x]||0;
-        bb+=blurred[Math.min(H-1,y+3)*W+x]||0;
-        wb+=blurred[y*W+x]||0;
-        cnt++;
+        const i=(y*W+x)*4;
+        if(data[i]>WHITE_THR&&data[i+1]>WHITE_THR&&data[i+2]>WHITE_THR) cnt++;
       }
-      const g=cnt>0?(ab-bb)/cnt:0;
-      const avgB=cnt>0?wb/cnt:0;
-      if(g>bestG){ bestG=g; bestY=y; }
-      if(avgB>maxBright) maxBright=avgB;
+      segWhite[y]=cnt/(ex-sx);
+      if(segWhite[y]>segMaxWhite) segMaxWhite=segWhite[y];
     }
 
-    // 判斷是否被遮蓋：
-    // 該段若亮度梯度很弱 → 白色亮帶消失 → 被鎳板遮蓋
-    const covered = bestG < globalBestG * 0.2;
-    const valid   = bestG > 0.008; // 降低有效段門檻
+    // 找此段白色區域的下緣
+    if(segMaxWhite>0.1){
+      for(let y=yS;y<=yE;y++){
+        if(segWhite[y]===segMaxWhite){ bestY=y; bestWhite=segMaxWhite; }
+      }
+      // 從最白行往下找白色消失的位置
+      for(let y=bestY;y<=yE;y++){
+        if(segWhite[y]<segMaxWhite*0.3){ bestY=y; break; }
+      }
+    }
 
-    segs.push({ x:cx, y:bestY, valid, covered, grad:bestG });
+    // 被遮蓋判斷：此段白色比例遠低於全域
+    const covered = segMaxWhite < maxWhiteVal * 0.25;
+    const valid   = segMaxWhite > 0.08;
+
+    segs.push({ x:cx, y:bestY, valid, covered, whiteVal:segMaxWhite });
   }
   return segs;
 }
