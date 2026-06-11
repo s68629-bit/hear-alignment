@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.5.1
+ 目前版本：v3.5.2
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.5.1 — 修正鎖定刀口按鈕未啟用問題</p>
+<p class="subtitle">v3.5.2 — 修正鎖定後 knifeLinear 被覆蓋問題</p>
 
 <div class="workspace">
 
@@ -312,6 +312,8 @@ function lockKnifeBaseline(){
   const {slope,intercept}=linReg(validSegs.map(s=>s.x),validSegs.map(s=>s.y));
   knifeBaseline={slope,intercept};
   knifeBaselineLocked=true;
+  // 同步更新 knifeLinear 為鎖定直線，供量測使用
+  knifeLinear={p1:{x:0,y:intercept},p2:{x:W,y:slope*W+intercept}};
   document.getElementById('btnLockKnife').style='border-color:#44aa66;color:#7fd4a0;background:#0e1e14;';
   document.getElementById('btnLockKnife').textContent='🔒 已鎖定';
   document.getElementById('btnLockKnife').disabled=true;
@@ -363,7 +365,10 @@ function loop(){
     knifeHistory.push(kResult);
     if(knifeHistory.length>SMOOTH_N) knifeHistory.shift();
     knifeSegs=smoothKnifeHistory(knifeHistory);
-    knifeLinear=knifeToLinear(knifeSegs);
+    // 未鎖定才更新 knifeLinear，鎖定後保持基準直線
+    if(!knifeBaselineLocked){
+      knifeLinear=knifeToLinear(knifeSegs);
+    }
     const validCount=knifeSegs.filter(s=>s.valid&&!s.covered).length;
     if(validCount>=4) setDC('dcKnife','實測'+validCount+'/'+KNIFE_SEGS+'段','full');
     else if(validCount>=1) setDC('dcKnife','部分'+validCount+'/'+KNIFE_SEGS+'段（遮蓋中）','partial');
