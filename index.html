@@ -24,7 +24,7 @@ v3.1  刀口搜尋改為全畫面（排除上下5%邊緣），不再限制下半
         - 手動點擊畫線位置後開始即時追蹤藍色畫線
         - 亮紅/暗紅 + 亮藍/暗藍 視覺邏輯統一
  ─────────────────────────────────────────────────────────────────────────
- 目前版本：v3.3
+ 目前版本：v3.4
  最後更新：2025-06
 =============================================================================
 -->
@@ -118,7 +118,7 @@ h1 { font-size: 0.95rem; letter-spacing: 0.12em; color: #7eb8f7; text-transform:
 </head>
 <body>
 <h1>⚙ 剪床對位 — 即時版</h1>
-<p class="subtitle">v3.3 — 移除鎖定，全自動雙線即時偵測，降低藍線門檻</p>
+<p class="subtitle">v3.4 — 修正點擊按鈕啟用 + 紅線穩定追蹤</p>
 
 <div class="workspace">
 
@@ -195,6 +195,7 @@ let stream=null, running=false, frozen=false, raf=null;
 let frameCount=0, lastFpsT=0;
 
 // 刀口：8段，每段有「有效/遮蓋」狀態
+let lastKnifeGlobalY = null; // 上一幀的刀口 Y，找不到時使用
 const KNIFE_SEGS = 8;
 let knifeSegs = null;   // Array of { x, y, valid, covered }
 let knifeLinear = null; // { p1, p2 } 量測用
@@ -237,6 +238,7 @@ async function toggleCam(){
     document.getElementById('btnCam').className='btn green on';
     document.getElementById('btnCam').textContent='📹 攝影機開啟中';
     document.getElementById('btnFreeze').disabled=false;
+    document.getElementById('btnClickMark').disabled=false;
     setLive(true,'即時偵測中');
     setHint('✅ 攝影機已開啟，正在偵測刀口紅線。確認紅線位置後，推入鎳板，再按「點擊畫線定位」。','ok');
     loop();
@@ -315,7 +317,7 @@ function resetMark(){
 }
 
 function resetAll(){
-  knifeSegs=null; knifeLinear=null; knifeHistory=[];
+  knifeSegs=null; knifeLinear=null; knifeHistory=[]; lastKnifeGlobalY=null;
   knifeLockedSegs=null; knifeLockedLinear=null; knifeLocked=false;
   markAnchorY=null; markData=null; markHistory=[];
   markClickPending=false;
@@ -419,7 +421,16 @@ function detectKnifeWithCover(fd){
   let globalBestY=Math.floor(H*0.5), globalBestG=0;
   for(let y=ym;y<H-ym;y++) if(grad[y]>globalBestG){ globalBestG=grad[y]; globalBestY=y; }
 
-  if(globalBestG<0.02) return null;
+  if(globalBestG<0.02){
+    // 找不到刀口：用上一幀位置繼續追蹤（補償鎳板遮蓋）
+    if(lastKnifeGlobalY!==null){
+      globalBestY=lastKnifeGlobalY;
+    } else {
+      return null;
+    }
+  } else {
+    lastKnifeGlobalY=globalBestY; // 記憶當前找到的位置
+  }
 
   // 8段各自偵測
   const segs=[];
@@ -427,7 +438,7 @@ function detectKnifeWithCover(fd){
     const sx=Math.floor(W*(0.05+s*0.9/KNIFE_SEGS));
     const ex=Math.floor(W*(0.05+(s+1)*0.9/KNIFE_SEGS));
     const cx=(sx+ex)/2;
-    const segRange=Math.min(60,Math.floor(H*0.12));
+    const segRange=Math.min(80,Math.floor(H*0.15)); // 擴大段搜尋範圍
     const yS=Math.max(2,globalBestY-segRange), yE=Math.min(H-2,globalBestY+segRange);
 
     // 在這段找梯度最大行
@@ -448,8 +459,8 @@ function detectKnifeWithCover(fd){
 
     // 判斷是否被遮蓋：
     // 該段若亮度梯度很弱 → 白色亮帶消失 → 被鎳板遮蓋
-    const covered = bestG < globalBestG * 0.25;
-    const valid   = bestG > 0.02;
+    const covered = bestG < globalBestG * 0.2;
+    const valid   = bestG > 0.008; // 降低有效段門檻
 
     segs.push({ x:cx, y:bestY, valid, covered, grad:bestG });
   }
